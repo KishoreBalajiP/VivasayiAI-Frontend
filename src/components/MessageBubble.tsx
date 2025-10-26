@@ -1,0 +1,60 @@
+import { Message } from '../types';
+import { Volume2 } from 'lucide-react';
+
+interface MessageBubbleProps {
+  message: Message;
+}
+
+export const MessageBubble = ({ message }: MessageBubbleProps) => {
+  const isUser = message.sender === 'user';
+
+  const playAudio = () => {
+    if (message.audioUrl) {
+      const audio = new Audio(message.audioUrl);
+      audio.play();
+    }
+  };
+
+  return (
+    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+      <div
+        className={`max-w-[80%] rounded-3xl p-5 shadow-md ${
+          isUser
+            ? 'bg-green-600 text-white'
+            : 'bg-white text-gray-800 border-2 border-gray-200'
+        }`}
+      >
+        {message.imageUrl && (
+          <img
+            src={message.imageUrl}
+            alt="Uploaded"
+            className="rounded-2xl mb-3 max-w-full h-auto"
+          />
+        )}
+
+        <p className="text-lg leading-relaxed whitespace-pre-wrap">{message.text}</p>
+
+        <div className={`flex items-center gap-2 mt-2 text-sm ${
+          isUser ? 'text-green-100' : 'text-gray-500'
+        }`}>
+          <span>
+            {message.timestamp.toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit'
+            })}
+          </span>
+
+          {message.audioUrl && (
+            <button
+              onClick={playAudio}
+              className="ml-2 p-2 hover:bg-opacity-20 hover:bg-black rounded-full transition-colors"
+              title="Play audio"
+            >
+              <Volume2 className="w-5 h-5" />
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
