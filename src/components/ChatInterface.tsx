@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { Message } from '../types';
 import { Send, Mic, Image as ImageIcon, LogOut, Languages, Loader2 } from 'lucide-react';
 import { MessageBubble } from './MessageBubble';
+import { sendChatMessage } from '../api';
 
 export const ChatInterface = () => {
   const { t, i18n } = useTranslation();
@@ -35,21 +36,39 @@ export const ChatInterface = () => {
     };
 
     setMessages(prev => [...prev, userMessage]);
+    const textToSend = input;
     setInput('');
     setIsProcessing(true);
 
-    setTimeout(() => {
+    try {
+      const responseData = await sendChatMessage(textToSend, language);
+
+      const replyText =
+        responseData?.data?.response && responseData.data.response.trim() !== ''
+          ? responseData.data.response
+          : 'No response received.';
+
       const aiMessage: Message = {
         id: (Date.now() + 1).toString(),
-        text: language === 'ta'
-          ? 'உங்கள் கேள்விக்கு நன்றி. இது ஒரு மாதிரி பதில். உண்மையான AI ஒருங்கிணைப்பு விரைவில் வரும்.'
-          : 'Thank you for your question. This is a sample response. Real AI integration coming soon.',
+        text: replyText,
         sender: 'ai',
         timestamp: new Date()
       };
+
       setMessages(prev => [...prev, aiMessage]);
-      setIsProcessing(false);
-    }, 1500);
+    } catch (error) {
+      setMessages(prev => [
+        ...prev,
+        {
+          id: (Date.now() + 1).toString(),
+          text: 'Server error. Please try again.',
+          sender: 'ai',
+          timestamp: new Date()
+        }
+      ]);
+    }
+
+    setIsProcessing(false);
   };
 
   const handleVoiceRecord = () => {
@@ -96,7 +115,6 @@ export const ChatInterface = () => {
             <button
               onClick={() => setShowLangMenu(!showLangMenu)}
               className="p-3 hover:bg-green-700 rounded-xl transition-colors"
-              title={t('changeLanguage')}
             >
               <Languages className="w-6 h-6" />
             </button>
@@ -104,7 +122,6 @@ export const ChatInterface = () => {
             <button
               onClick={logout}
               className="p-3 hover:bg-green-700 rounded-xl transition-colors"
-              title={t('logout')}
             >
               <LogOut className="w-6 h-6" />
             </button>
@@ -125,20 +142,6 @@ export const ChatInterface = () => {
 
       <div className="flex-1 overflow-y-auto p-4">
         <div className="max-w-4xl mx-auto space-y-4">
-          {messages.length === 0 && (
-            <div className="text-center py-20">
-              <div className="text-6xl mb-4">🌾</div>
-              <h2 className="text-2xl font-semibold text-gray-700 mb-2">
-                {t('askQuestion')}
-              </h2>
-              <p className="text-gray-500 text-lg">
-                {language === 'ta'
-                  ? 'குரல், உரை அல்லது படத்தைப் பயன்படுத்தி கேளுங்கள்'
-                  : 'Use voice, text, or images to ask'}
-              </p>
-            </div>
-          )}
-
           {messages.map(message => (
             <MessageBubble key={message.id} message={message} />
           ))}
@@ -160,19 +163,15 @@ export const ChatInterface = () => {
             <button
               onClick={handleVoiceRecord}
               className={`p-5 rounded-2xl transition-all shadow-lg ${
-                isRecording
-                  ? 'bg-red-600 hover:bg-red-700 animate-pulse'
-                  : 'bg-green-600 hover:bg-green-700'
-              } text-white flex-shrink-0`}
-              title={t('tapToSpeak')}
+                isRecording ? 'bg-red-600 animate-pulse' : 'bg-green-600'
+              } text-white`}
             >
               <Mic className="w-8 h-8" />
             </button>
 
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="p-5 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl transition-all shadow-lg flex-shrink-0"
-              title={t('uploadImage')}
+              className="p-5 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl transition-all shadow-lg"
             >
               <ImageIcon className="w-8 h-8" />
             </button>
@@ -190,16 +189,15 @@ export const ChatInterface = () => {
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+                onKeyDown={(e) => e.key === 'Enter' && handleSend()}
                 placeholder={t('typeMessage')}
-                className="flex-1 p-5 border-2 border-gray-300 rounded-2xl focus:outline-none focus:border-green-600 text-lg"
+                className="flex-1 p-5 border-2 border-gray-300 rounded-2xl"
               />
 
               <button
                 onClick={handleSend}
                 disabled={!input.trim()}
-                className="p-5 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white rounded-2xl transition-all shadow-lg flex-shrink-0"
-                title={t('send')}
+                className="p-5 bg-green-600 text-white rounded-2xl shadow-lg disabled:bg-gray-400"
               >
                 <Send className="w-8 h-8" />
               </button>
