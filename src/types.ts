@@ -25,3 +25,29 @@ export interface ChatSession {
 }
 
 export type Language = 'en' | 'ta';
+
+// WEATHER TYPES - Farmer Friendly
+export interface WeatherData {
+  temperature: number;
+  feelsLike: number;
+  description: string; // Simple farmer terms
+  location: string;
+  humidity: number;
+  windSpeed: number;
+  rainfall: number;
+  soilMoisture: string; // Dry/Normal/Wet
+  farmingAdvice: string[];
+  icon: string;
+  forecast?: DailyForecast[];
+}
+
+export interface DailyForecast {
+  date: string;
+  day: string;
+  maxTemp: number;
+  minTemp: number;
+  description: string;
+  rainfall: number;
+  farmingTip: string;
+  icon: string;
+}
