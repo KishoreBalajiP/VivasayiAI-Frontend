@@ -1,5 +1,6 @@
 import { Message } from '../types';
 import { Volume2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next'; // ADDED
 
 interface MessageBubbleProps {
   message: Message;
@@ -7,6 +8,7 @@ interface MessageBubbleProps {
 
 export const MessageBubble = ({ message }: MessageBubbleProps) => {
   const isUser = message.sender === 'user';
+  const { t } = useTranslation(); // ADDED
 
   // Fix: Convert timestamp string to Date object if needed
   const timestamp = message.timestamp instanceof Date 
@@ -53,7 +55,7 @@ export const MessageBubble = ({ message }: MessageBubbleProps) => {
             <button
               onClick={playAudio}
               className="ml-2 p-2 hover:bg-opacity-20 hover:bg-black rounded-full transition-colors"
-              title="Play audio"
+              title={t('playAudio')} // CHANGED FROM HARDCODED
             >
               <Volume2 className="w-5 h-5" />
             </button>

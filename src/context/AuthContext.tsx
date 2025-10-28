@@ -39,8 +39,14 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     if (storedUser && token) {
       setUser(JSON.parse(storedUser));
     }
-    if (storedLang) {
+    
+    // ✅ FIX: Properly validate and set language from localStorage
+    if (storedLang && (storedLang === 'en' || storedLang === 'ta')) {
       setLanguageState(storedLang);
+    } else {
+      // Default to English if no valid language is stored
+      setLanguageState('en');
+      localStorage.setItem('language', 'en');
     }
 
     const urlParams = new URLSearchParams(window.location.search);
@@ -52,6 +58,18 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       setIsLoading(false);
     }
   }, []);
+
+  // ✅ FIX: Sync i18n with language changes
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      // Import i18n and change language when language state changes
+      import('../i18n').then(({ default: i18n }) => {
+        if (i18n.language !== language) {
+          i18n.changeLanguage(language);
+        }
+      });
+    }
+  }, [language]);
 
   const handleCallback = async (code: string) => {
     try {
@@ -105,14 +123,21 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const logout = () => {
     localStorage.removeItem('user');
     localStorage.removeItem('id_token');
-    localStorage.removeItem('language');
+    // ✅ FIX: Don't remove language on logout - keep user preference
+    // localStorage.removeItem('language');
     setUser(null);
-    setLanguageState('en');
+    // ✅ FIX: Don't reset language to English on logout
+    // setLanguageState('en');
   };
 
   const setLanguage = (lang: Language) => {
     setLanguageState(lang);
     localStorage.setItem('language', lang);
+    
+    // ✅ FIX: Also update i18n immediately
+    import('../i18n').then(({ default: i18n }) => {
+      i18n.changeLanguage(lang);
+    });
   };
 
   const updateUserLanguage = async (lang: Language) => {

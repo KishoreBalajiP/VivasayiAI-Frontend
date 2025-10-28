@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { Trash2 } from "lucide-react";
+import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 
 interface Chat {
   _id: string;
@@ -16,6 +18,7 @@ interface Props {
 
 export default function ChatSidebar({ userEmail, activeChatId, setActiveChatId, refreshChats }: Props) {
   const [chats, setChats] = useState<Chat[]>([]);
+  const { t } = useTranslation();
 
   const fetchChats = async () => {
     if (!userEmail) return;
@@ -42,14 +45,23 @@ export default function ChatSidebar({ userEmail, activeChatId, setActiveChatId, 
     if (newSession?._id) {
       setActiveChatId(newSession._id);
       fetchChats();
+      
+      toast.success(t('chatCreated'), {
+        duration: 3000,
+        position: 'top-right',
+      });
+    } else {
+      toast.error(t('chatCreateFailed'), {
+        duration: 4000,
+        position: 'top-right',
+      });
     }
   };
 
   const handleDeleteChat = async (chatId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     
-    if (!window.confirm("Are you sure you want to delete this chat?")) return;
-
+    // ✅ REMOVED window.confirm - action happens immediately
     try {
       const res = await fetch(`${import.meta.env.VITE_API_URL}/chatsessions/${chatId}`, {
         method: "DELETE",
@@ -62,17 +74,25 @@ export default function ChatSidebar({ userEmail, activeChatId, setActiveChatId, 
         if (activeChatId === chatId) {
           setActiveChatId(null);
         }
+        
+        toast.success(t('chatDeleted'), {
+          duration: 3000,
+          position: 'top-right',
+        });
       }
     } catch (error) {
       console.error("Failed to delete chat:", error);
+      toast.error(t('deleteFailed'), {
+        duration: 4000,
+        position: 'top-right',
+      });
     }
   };
 
   const handleClearAllChats = async () => {
     if (chats.length === 0) return;
     
-    if (!window.confirm("Are you sure you want to delete ALL chats? This action cannot be undone.")) return;
-
+    // ✅ REMOVED window.confirm - action happens immediately
     try {
       const res = await fetch(`${import.meta.env.VITE_API_URL}/chatsessions/clear/all`, {
         method: "DELETE",
@@ -83,11 +103,18 @@ export default function ChatSidebar({ userEmail, activeChatId, setActiveChatId, 
       if (res.ok) {
         setChats([]);
         setActiveChatId(null);
-        alert("All chats have been deleted successfully!");
+        
+        toast.success(t('allDeleted'), {
+          duration: 3000,
+          position: 'top-right',
+        });
       }
     } catch (error) {
       console.error("Failed to clear all chats:", error);
-      alert("Failed to delete all chats. Please try again.");
+      toast.error(t('deleteFailed'), {
+        duration: 4000,
+        position: 'top-right',
+      });
     }
   };
 
@@ -97,12 +124,12 @@ export default function ChatSidebar({ userEmail, activeChatId, setActiveChatId, 
         onClick={handleNewChat}
         className="bg-green-600 text-white py-2 rounded mb-4"
       >
-        + New Chat
+        + {t('newChat')}
       </button>
 
       <div className="flex-1 overflow-y-auto mb-4">
         {chats.length === 0 && (
-          <p className="text-gray-500 text-center">No chats yet</p>
+          <p className="text-gray-500 text-center">{t('noChats')}</p>
         )}
 
         {chats.map(chat => (
@@ -113,12 +140,12 @@ export default function ChatSidebar({ userEmail, activeChatId, setActiveChatId, 
             }`}
             onClick={() => setActiveChatId(chat._id)}
           >
-            {chat.title || `Chat ${chat._id.slice(-4)}`}
+            {chat.title || `${t('chat')} ${chat._id.slice(-4)}`}
             
             <button
               onClick={(e) => handleDeleteChat(chat._id, e)}
               className="absolute right-2 top-1/2 transform -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1 text-red-500 hover:text-red-700"
-              title="Delete chat"
+              title={t('deleteChat')}
             >
               <Trash2 className="w-4 h-4" />
             </button>
@@ -126,7 +153,6 @@ export default function ChatSidebar({ userEmail, activeChatId, setActiveChatId, 
         ))}
       </div>
 
-      {/* ✅ Clear All Chats button - Always visible at bottom */}
       <button
         onClick={handleClearAllChats}
         disabled={chats.length === 0}
@@ -136,7 +162,7 @@ export default function ChatSidebar({ userEmail, activeChatId, setActiveChatId, 
             : "bg-red-600 text-white hover:bg-red-700"
         }`}
       >
-        🗑️ Clear All Chats
+        🗑️ {t('clearAllChats')}
       </button>
     </div>
   );
