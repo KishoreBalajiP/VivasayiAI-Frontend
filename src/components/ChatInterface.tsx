@@ -6,7 +6,13 @@ import { Send, Mic, Image as ImageIcon, LogOut, Languages, Loader2 } from 'lucid
 import { MessageBubble } from './MessageBubble';
 import { sendChatMessage } from '../api';
 
-export const ChatInterface = () => {
+interface Props {
+  activeChatId: string | null;
+  setActiveChatId: (id: string | null) => void;
+  onMessageSent?: () => void; // Optional callback to notify parent
+}
+
+export const ChatInterface = ({ activeChatId, setActiveChatId, onMessageSent }: Props) => {
   const { t, i18n } = useTranslation();
   const { user, logout, language, setLanguage } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -14,6 +20,7 @@ export const ChatInterface = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showLangMenu, setShowLangMenu] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -25,23 +32,70 @@ export const ChatInterface = () => {
     scrollToBottom();
   }, [messages]);
 
+  // ✅ Load chat messages when chat changes
+  useEffect(() => {
+    if (!activeChatId) return;
+    const fetchMessages = async () => {
+      try {
+        const res = await fetch(`${import.meta.env.VITE_API_URL}/chatsessions/${activeChatId}`);
+        const data = await res.json();
+        setMessages(data.data?.session?.messages || []);
+      } catch (err) {
+        console.error("Failed to load messages:", err);
+      }
+    };
+    fetchMessages();
+  }, [activeChatId]);
+
+  // const saveMessageToDB = async (sender: string, text: string) => {
+  //   if (!activeChatId) return;
+  //   try {
+  //     await fetch(`${import.meta.env.VITE_API_URL}/chatsessions/${activeChatId}/message`, {
+  //       method: "POST",
+  //       headers: { "Content-Type": "application/json" },
+  //       body: JSON.stringify({ sender, text })
+  //     });
+  //   } catch (error) {
+  //     console.error("Message save failed:", error);
+  //   }
+  // };
+
   const handleSend = async () => {
     if (!input.trim()) return;
 
+    console.log('🔴 DEBUG: Sending message, activeChatId:', activeChatId);
+
+    const textToSend = input;
+
     const userMessage: Message = {
-      id: Date.now().toString(),
-      text: input,
+      id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, // ✅ Fixed: More unique ID
+      text: textToSend,
       sender: 'user',
       timestamp: new Date()
     };
 
     setMessages(prev => [...prev, userMessage]);
-    const textToSend = input;
     setInput('');
+
+    // ✅ Save User Message in DB
+    // saveMessageToDB('user', textToSend);
+
     setIsProcessing(true);
 
     try {
-      const responseData = await sendChatMessage(textToSend, language);
+      const responseData = await sendChatMessage(
+        textToSend,
+        language,
+        activeChatId,
+        user?.email
+      );
+
+      console.log('🟡 DEBUG: Backend response:', responseData);
+
+        if (!activeChatId && responseData.data?.chatId) {
+          console.log('🟠 DEBUG: Setting new activeChatId:', responseData.data.chatId);
+          setActiveChatId(responseData.data.chatId);
+        }
 
       const replyText =
         responseData?.data?.response && responseData.data.response.trim() !== ''
@@ -49,23 +103,32 @@ export const ChatInterface = () => {
           : 'No response received.';
 
       const aiMessage: Message = {
-        id: (Date.now() + 1).toString(),
+        id: `ai-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, // ✅ Fixed: More unique ID
         text: replyText,
         sender: 'ai',
         timestamp: new Date()
       };
 
       setMessages(prev => [...prev, aiMessage]);
+
+      console.log('🟢 DEBUG: Calling onMessageSent callback');
+      if (onMessageSent) onMessageSent();
+
+      // ✅ Save AI Message in DB
+      // saveMessageToDB('ai', replyText);
+
     } catch (error) {
-      setMessages(prev => [
-        ...prev,
-        {
-          id: (Date.now() + 1).toString(),
-          text: 'Server error. Please try again.',
-          sender: 'ai',
-          timestamp: new Date()
-        }
-      ]);
+      const errorMsg = 'Server error. Please try again.';
+      const errorMessage: Message = {
+        id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, // ✅ Fixed: More unique ID
+        text: errorMsg,
+        sender: 'ai',
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, errorMessage]);
+
+      // ✅ Save error reply too (optional, but consistent)
+      // saveMessageToDB('ai', errorMsg);
     }
 
     setIsProcessing(false);
@@ -80,7 +143,7 @@ export const ChatInterface = () => {
     if (file) {
       const imageUrl = URL.createObjectURL(file);
       const userMessage: Message = {
-        id: Date.now().toString(),
+        id: `image-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, // ✅ Fixed: More unique ID
         text: language === 'ta' ? 'படம் பதிவேற்றப்பட்டது' : 'Image uploaded',
         sender: 'user',
         timestamp: new Date(),
@@ -142,8 +205,8 @@ export const ChatInterface = () => {
 
       <div className="flex-1 overflow-y-auto p-4">
         <div className="max-w-4xl mx-auto space-y-4">
-          {messages.map(message => (
-            <MessageBubble key={message.id} message={message} />
+          {messages.map((message, index) => (
+            <MessageBubble key={`${message.id}-${index}`} message={message} />
           ))}
 
           {isProcessing && (
@@ -162,9 +225,7 @@ export const ChatInterface = () => {
           <div className="flex gap-3 items-end">
             <button
               onClick={handleVoiceRecord}
-              className={`p-5 rounded-2xl transition-all shadow-lg ${
-                isRecording ? 'bg-red-600 animate-pulse' : 'bg-green-600'
-              } text-white`}
+              className={`p-5 rounded-2xl transition-all shadow-lg ${isRecording ? 'bg-red-600 animate-pulse' : 'bg-green-600'} text-white`}
             >
               <Mic className="w-8 h-8" />
             </button>

@@ -8,6 +8,11 @@ interface MessageBubbleProps {
 export const MessageBubble = ({ message }: MessageBubbleProps) => {
   const isUser = message.sender === 'user';
 
+  // Fix: Convert timestamp string to Date object if needed
+  const timestamp = message.timestamp instanceof Date 
+    ? message.timestamp 
+    : new Date(message.timestamp);
+
   const playAudio = () => {
     if (message.audioUrl) {
       const audio = new Audio(message.audioUrl);
@@ -38,7 +43,7 @@ export const MessageBubble = ({ message }: MessageBubbleProps) => {
           isUser ? 'text-green-100' : 'text-gray-500'
         }`}>
           <span>
-            {message.timestamp.toLocaleTimeString([], {
+            {timestamp.toLocaleTimeString([], {
               hour: '2-digit',
               minute: '2-digit'
             })}

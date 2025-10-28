@@ -1,16 +1,30 @@
-export const sendChatMessage = async (message: string, language: string) => {
+export const sendChatMessage = async (
+  message: string,
+  language: string,
+  chatId?: string | null,
+  userEmail?: string | null
+) => {
   try {
     const baseUrl = import.meta.env.VITE_API_URL;
+
+    // Build request body dynamically
+    const payload: any = {
+      message,
+      language,
+    };
+
+    // Only send chatId when continuing an existing chat
+    if (chatId) payload.chatId = chatId;
+
+    // Only send userEmail when creating first chat
+    if (userEmail) payload.userEmail = userEmail;
 
     const res = await fetch(`${baseUrl}/chat`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({
-        message,
-        language
-      })
+      body: JSON.stringify(payload)
     });
 
     if (!res.ok) {

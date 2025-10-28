@@ -2,10 +2,14 @@ import { useAuth } from './context/AuthContext';
 import { LoginScreen } from './components/LoginScreen';
 import { LanguageSelection } from './components/LanguageSelection';
 import { ChatInterface } from './components/ChatInterface';
+import ChatSidebar from './components/ChatSidebar';
 import { Loader2 } from 'lucide-react';
+import { useState } from 'react';
 
 function App() {
   const { user, language, isLoading } = useAuth();
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [refreshChats, setRefreshChats] = useState(false); // ✅ Added for refreshing sidebar
 
   if (isLoading) {
     return (
@@ -18,15 +22,29 @@ function App() {
     );
   }
 
-  if (!user) {
-    return <LoginScreen />;
-  }
+  if (!user) return <LoginScreen />;
+  if (!language) return <LanguageSelection />;
 
-  if (!language) {
-    return <LanguageSelection />;
-  }
+  return (
+    <div className="flex h-screen">
+      {/* ✅ Sidebar */}
+      <ChatSidebar
+        userEmail={user.email}
+        activeChatId={activeChatId}
+        setActiveChatId={setActiveChatId}
+        refreshChats={refreshChats} // ✅ Pass refresh prop
+      />
 
-  return <ChatInterface />;
+      {/* ✅ Chat Window */}
+      <div className="flex-1">
+        <ChatInterface 
+          activeChatId={activeChatId}
+          setActiveChatId={setActiveChatId}
+          onMessageSent={() => setRefreshChats(prev => !prev)} // ✅ Add callback to trigger refresh
+        />
+      </div>
+    </div>
+  );
 }
 
 export default App;

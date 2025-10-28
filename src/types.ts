@@ -15,4 +15,13 @@ export interface Message {
   imageUrl?: string;
 }
 
+export interface ChatSession {
+  _id: string;
+  title: string;
+  userEmail: string;
+  messages: Message[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type Language = 'en' | 'ta';
