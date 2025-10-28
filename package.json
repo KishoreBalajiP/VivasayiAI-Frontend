@@ -16,6 +16,7 @@
     "lucide-react": "^0.344.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-hook-speech-to-text": "^0.8.0",
     "react-i18next": "^16.2.0",
     "sonner": "^2.0.7"
   },

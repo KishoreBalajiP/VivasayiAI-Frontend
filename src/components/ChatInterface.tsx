@@ -2,14 +2,15 @@ import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import { Message } from '../types';
-import { Send, Mic, Image as ImageIcon, LogOut, Languages, Loader2 } from 'lucide-react';
+import { Send, Image as ImageIcon, LogOut, Languages, Loader2 } from 'lucide-react';
 import { MessageBubble } from './MessageBubble';
 import { sendChatMessage } from '../api';
+import VoiceRecorder from './VoiceRecorder';
 
 interface Props {
   activeChatId: string | null;
   setActiveChatId: (id: string | null) => void;
-  onMessageSent?: () => void; // Optional callback to notify parent
+  onMessageSent?: () => void;
 }
 
 export const ChatInterface = ({ activeChatId, setActiveChatId, onMessageSent }: Props) => {
@@ -17,7 +18,7 @@ export const ChatInterface = ({ activeChatId, setActiveChatId, onMessageSent }: 
   const { user, logout, language, setLanguage } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
-  const [isRecording, setIsRecording] = useState(false);
+  const [isRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showLangMenu, setShowLangMenu] = useState(false);
 
@@ -32,7 +33,12 @@ export const ChatInterface = ({ activeChatId, setActiveChatId, onMessageSent }: 
     scrollToBottom();
   }, [messages]);
 
-  // ✅ Load chat messages when chat changes
+  // Clear input when chat changes
+  useEffect(() => {
+    setInput('');
+  }, [activeChatId]);
+
+  // Load chat messages when chat changes
   useEffect(() => {
     if (!activeChatId) return;
     const fetchMessages = async () => {
@@ -47,19 +53,6 @@ export const ChatInterface = ({ activeChatId, setActiveChatId, onMessageSent }: 
     fetchMessages();
   }, [activeChatId]);
 
-  // const saveMessageToDB = async (sender: string, text: string) => {
-  //   if (!activeChatId) return;
-  //   try {
-  //     await fetch(`${import.meta.env.VITE_API_URL}/chatsessions/${activeChatId}/message`, {
-  //       method: "POST",
-  //       headers: { "Content-Type": "application/json" },
-  //       body: JSON.stringify({ sender, text })
-  //     });
-  //   } catch (error) {
-  //     console.error("Message save failed:", error);
-  //   }
-  // };
-
   const handleSend = async () => {
     if (!input.trim()) return;
 
@@ -68,7 +61,7 @@ export const ChatInterface = ({ activeChatId, setActiveChatId, onMessageSent }: 
     const textToSend = input;
 
     const userMessage: Message = {
-      id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, // ✅ Fixed: More unique ID
+      id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       text: textToSend,
       sender: 'user',
       timestamp: new Date()
@@ -76,9 +69,6 @@ export const ChatInterface = ({ activeChatId, setActiveChatId, onMessageSent }: 
 
     setMessages(prev => [...prev, userMessage]);
     setInput('');
-
-    // ✅ Save User Message in DB
-    // saveMessageToDB('user', textToSend);
 
     setIsProcessing(true);
 
@@ -92,10 +82,10 @@ export const ChatInterface = ({ activeChatId, setActiveChatId, onMessageSent }: 
 
       console.log('🟡 DEBUG: Backend response:', responseData);
 
-        if (!activeChatId && responseData.data?.chatId) {
-          console.log('🟠 DEBUG: Setting new activeChatId:', responseData.data.chatId);
-          setActiveChatId(responseData.data.chatId);
-        }
+      if (!activeChatId && responseData.data?.chatId) {
+        console.log('🟠 DEBUG: Setting new activeChatId:', responseData.data.chatId);
+        setActiveChatId(responseData.data.chatId);
+      }
 
       const replyText =
         responseData?.data?.response && responseData.data.response.trim() !== ''
@@ -103,7 +93,7 @@ export const ChatInterface = ({ activeChatId, setActiveChatId, onMessageSent }: 
           : 'No response received.';
 
       const aiMessage: Message = {
-        id: `ai-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, // ✅ Fixed: More unique ID
+        id: `ai-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         text: replyText,
         sender: 'ai',
         timestamp: new Date()
@@ -114,28 +104,18 @@ export const ChatInterface = ({ activeChatId, setActiveChatId, onMessageSent }: 
       console.log('🟢 DEBUG: Calling onMessageSent callback');
       if (onMessageSent) onMessageSent();
 
-      // ✅ Save AI Message in DB
-      // saveMessageToDB('ai', replyText);
-
     } catch (error) {
       const errorMsg = 'Server error. Please try again.';
       const errorMessage: Message = {
-        id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, // ✅ Fixed: More unique ID
+        id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         text: errorMsg,
         sender: 'ai',
         timestamp: new Date()
       };
       setMessages(prev => [...prev, errorMessage]);
-
-      // ✅ Save error reply too (optional, but consistent)
-      // saveMessageToDB('ai', errorMsg);
     }
 
     setIsProcessing(false);
-  };
-
-  const handleVoiceRecord = () => {
-    setIsRecording(!isRecording);
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -143,7 +123,7 @@ export const ChatInterface = ({ activeChatId, setActiveChatId, onMessageSent }: 
     if (file) {
       const imageUrl = URL.createObjectURL(file);
       const userMessage: Message = {
-        id: `image-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, // ✅ Fixed: More unique ID
+        id: `image-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         text: language === 'ta' ? 'படம் பதிவேற்றப்பட்டது' : 'Image uploaded',
         sender: 'user',
         timestamp: new Date(),
@@ -158,6 +138,11 @@ export const ChatInterface = ({ activeChatId, setActiveChatId, onMessageSent }: 
     setLanguage(newLang);
     i18n.changeLanguage(newLang);
     setShowLangMenu(false);
+  };
+
+  // Handle voice input result - replace input completely
+  const handleVoiceResult = (text: string) => {
+    setInput(text);
   };
 
   return (
@@ -223,12 +208,9 @@ export const ChatInterface = ({ activeChatId, setActiveChatId, onMessageSent }: 
       <div className="bg-white border-t-2 border-gray-200 p-4 shadow-lg">
         <div className="max-w-4xl mx-auto">
           <div className="flex gap-3 items-end">
-            <button
-              onClick={handleVoiceRecord}
-              className={`p-5 rounded-2xl transition-all shadow-lg ${isRecording ? 'bg-red-600 animate-pulse' : 'bg-green-600'} text-white`}
-            >
-              <Mic className="w-8 h-8" />
-            </button>
+            <VoiceRecorder 
+              onResult={handleVoiceResult}
+            />
 
             <button
               onClick={() => fileInputRef.current?.click()}
