@@ -1,15 +1,16 @@
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
-import { Sprout } from 'lucide-react';
+import { Sprout, MapPin } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { FarmerWeatherService } from '../services/farmerWeatherService';
 import { WeatherData } from '../types';
 
 export const LoginScreen = () => {
-  const { t } = useTranslation(); // Removed unused i18n
+  const { t } = useTranslation();
   const { login, language } = useAuth();
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [loadingWeather, setLoadingWeather] = useState(true);
+  const [isDemoLocation, setIsDemoLocation] = useState(false);
 
   useEffect(() => {
     loadWeather();
@@ -20,12 +21,11 @@ export const LoginScreen = () => {
       setLoadingWeather(true);
       const location = await FarmerWeatherService.getFarmerLocation();
       const weatherData = await FarmerWeatherService.getFarmerWeather(
-        location.lat, 
-        location.lon, 
-        location.district, // Use district instead of name
+        location, 
         language as 'en' | 'ta'
       );
       setWeather(weatherData);
+      setIsDemoLocation(!location.isInTamilNadu);
     } catch (error) {
       console.error('Failed to load weather:', error);
     } finally {
@@ -39,9 +39,17 @@ export const LoginScreen = () => {
         <div className="flex flex-col lg:flex-row gap-8">
           {/* Weather Section */}
           <div className="lg:w-2/5 bg-gradient-to-br from-blue-50 to-green-50 rounded-2xl p-6 border border-green-200">
-            <h3 className="text-xl font-bold text-gray-800 mb-4 text-center">
-              {language === 'en' ? "Today's Weather for Farmers" : "இன்றைய விவசாய வானிலை"}
-            </h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-gray-800">
+                {language === 'en' ? "Today's Weather for Farmers" : "இன்றைய விவசாய வானிலை"}
+              </h3>
+              {isDemoLocation && (
+                <div className="flex items-center gap-1 bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full text-xs">
+                  <MapPin className="w-3 h-3" />
+                  {language === 'en' ? "Demo" : "டெமோ"}
+                </div>
+              )}
+            </div>
             
             {loadingWeather ? (
               <div className="text-center py-8">
@@ -52,6 +60,18 @@ export const LoginScreen = () => {
               </div>
             ) : weather ? (
               <div className="space-y-4">
+                {/* Demo Notice */}
+                {isDemoLocation && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">
+                    <p className="text-blue-700 text-sm">
+                      {language === 'en' 
+                        ? "📍 Showing Tamil Nadu weather for demonstration"
+                        : "📍 டெமோஸ்ட்ரேஷனுக்கு தமிழ்நாடு வானிலை காட்டப்படுகிறது"
+                      }
+                    </p>
+                  </div>
+                )}
+
                 {/* Current Weather */}
                 <div className="text-center">
                   <div className="text-4xl mb-2">{weather.icon}</div>
@@ -90,7 +110,7 @@ export const LoginScreen = () => {
                     {language === 'en' ? "Farming Advice" : "விவசாய ஆலோசனை"}
                   </div>
                   <ul className="text-xs text-yellow-700 space-y-1">
-                    {weather.farmingAdvice.slice(0, 2).map((advice, index) => (
+                    {weather.farmingAdvice.slice(0, 3).map((advice, index) => (
                       <li key={index}>• {advice}</li>
                     ))}
                   </ul>
