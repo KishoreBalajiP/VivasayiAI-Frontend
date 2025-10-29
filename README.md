@@ -1,81 +1,167 @@
 # Tamil Nadu AI Farming Assistant (Frontend)
 
-Lightweight React + Vite frontend for the Tamil Nadu AI Farming Assistant.
+A React + Vite frontend application for Tamil Nadu farmers providing weather-aware farming assistance with bilingual support (English/Tamil).
 
-## Repository structure
-- src/
-  - components/
-    - ChatInterface.tsx — main chat UI ([src/components/ChatInterface.tsx](src/components/ChatInterface.tsx))
-    - MessageBubble.tsx — message UI ([src/components/MessageBubble.tsx](src/components/MessageBubble.tsx))
-    - LoginScreen.tsx — Google/Cognito login UI ([src/components/LoginScreen.tsx](src/components/LoginScreen.tsx))
-    - LanguageSelection.tsx — initial language chooser ([src/components/LanguageSelection.tsx](src/components/LanguageSelection.tsx))
-  - context/
-    - AuthContext.tsx — OAuth2 code flow with Cognito + localStorage ([src/context/AuthContext.tsx](src/context/AuthContext.tsx))
-  - i18n.ts — translations and i18next setup ([src/i18n.ts](src/i18n.ts))
-  - types.ts — shared types (e.g. [`User`](src/types.ts), `Message`, `Language`) ([src/types.ts](src/types.ts))
-  - main.tsx, App.tsx, index.css, vite-env.d.ts
-- vite.config.ts — Vite configuration ([vite.config.ts](vite.config.ts))
-- tailwind.config.js, postcss.config.js — Tailwind setup
-- package.json — scripts and dependencies
-- tsconfig.*.json — TypeScript configs
+## Core Features
 
-## Key features
-- OAuth2 login with Amazon Cognito (authorization code flow) handled in [src/context/AuthContext.tsx](src/context/AuthContext.tsx)
-- Multilingual UI (English / Tamil) using i18next ([src/i18n.ts](src/i18n.ts))
-- Chat interface supporting:
-  - Text input
-  - Image upload (client-side preview)
-  - Voice recording toggle UI (placeholder)
-  - Message bubbles with audio playback support ([src/components/MessageBubble.tsx](src/components/MessageBubble.tsx))
-- Tailwind CSS for styling
-- Simple local storage persistence for user and selected language
+- 🌏 Bilingual interface (English/Tamil)
+- 🌤️ Real-time weather integration for Tamil Nadu districts
+- 🔒 Secure authentication via Amazon Cognito
+- 💬 AI-powered farming assistance chat
+- 🎙️ Voice input support
+- 📸 Image upload capabilities
+- 📱 Responsive design for all devices
 
-## Quick start (Windows)
-1. Install dependencies
-   - Open a terminal (PowerShell/CMD) in the project folder:
-     npm install
+## Project Structure
 
-2. Create a local .env file (optional) and add runtime variables:
-   - Example: create `.env` at project root
-     VITE_API_URL=http://localhost:5000
-     VITE_COGNITO_DOMAIN=your-cognito-domain
-     VITE_COGNITO_CLIENT_ID=your-client-id
-     VITE_COGNITO_REDIRECT_URI=http://localhost:5173
+```
+src/
+├── components/
+│   ├── ChatInterface.tsx     # Main chat UI with voice/image support
+│   ├── ChatSidebar.tsx      # Chat history management
+│   ├── LanguageSelection.tsx # Language switcher
+│   ├── LoginScreen.tsx      # Auth + Weather dashboard
+│   ├── MessageBubble.tsx    # Chat message component
+│   └── VoiceRecorder.tsx    # Speech-to-text handler
+├── context/
+│   └── AuthContext.tsx      # Authentication state management
+├── services/
+│   └── farmerWeatherService.ts # Weather API integration
+├── config/
+│   └── tamilnaduDistricts.ts   # District coordinates
+├── types.ts                 # TypeScript interfaces
+├── i18n.ts                 # Translations
+├── api.ts                  # Backend API calls
+└── config.ts               # Environment configuration
+```
 
-   Note: Vite exposes env vars prefixed with `VITE_` to the client. The frontend reads these in [src/config.ts](src/config.ts).
+## Technical Stack
 
-3. Run the dev server:
+- **Frontend**: React 18 with TypeScript
+- **Build Tool**: Vite
+- **Styling**: TailwindCSS
+- **State Management**: React Context
+- **Authentication**: Amazon Cognito OAuth2
+- **Internationalization**: i18next
+- **APIs**: Weather (Open-Meteo), Custom Backend
+- **Voice Input**: react-hook-speech-to-text
+- **Notifications**: Sonner
+
+## Environment Variables
+
+Create a `.env` file with:
+
+```env
+VITE_API_URL=http://localhost:5000
+VITE_COGNITO_DOMAIN=your-cognito-domain
+VITE_COGNITO_CLIENT_ID=your-client-id
+VITE_COGNITO_REDIRECT_URI=http://localhost:5173
+```
+
+## Quick Start
+
+1. Install dependencies:
+
+   ```bash
+   npm install
+   ```
+
+2. Start development server:
+
+   ```bash
    npm run dev
-   - Open the URL printed by Vite (usually http://localhost:5173)
+   ```
 
-4. Build for production:
+3. Build for production:
+
+   ```bash
    npm run build
+   ```
+
+4. Preview production build:
+
+   ```bash
    npm run preview
+   ```
 
-5. Lint / Type-check:
-   npm run lint
-   npm run typecheck
+## Key Features Breakdown
 
-## Authentication details
-- The app uses Cognito OAuth2 authorization code flow. Configuration lives in [src/config.ts](src/config.ts) and is read from env vars:
-  - VITE_COGNITO_DOMAIN
-  - VITE_COGNITO_CLIENT_ID
-  - VITE_COGNITO_REDIRECT_URI
-- The exchange for tokens happens client-side in [src/context/AuthContext.tsx](src/context/AuthContext.tsx). For production consider moving token exchange to a secure backend.
+### Weather Integration
 
-## Important files to review
-- [src/context/AuthContext.tsx](src/context/AuthContext.tsx) — login/logout, token handling, localStorage usage
-- [src/i18n.ts](src/i18n.ts) — translation strings and language keys
-- [src/components/ChatInterface.tsx](src/components/ChatInterface.tsx) — UI interactions and mock AI response
-- [src/types.ts](src/types.ts) — shared type definitions (e.g. [`User`](src/types.ts))
+- Real-time weather data for Tamil Nadu districts
+- Automatic location detection
+- Fallback to demo mode for users outside Tamil Nadu
+- Farming-specific weather interpretations
+- Soil moisture predictions
 
-## Notes & TODOs
-- Replace the placeholder AI response in [src/components/ChatInterface.tsx](src/components/ChatInterface.tsx) with backend integration to your AI service.
-- Voice recording currently only toggles UI state; implement recording/upload if needed.
-- Consider moving the OAuth token exchange to a backend for improved security (do not expose client secrets in the browser).
-- Add automated tests and CI if required.
+### Chat Features
 
-If you want, I can:
-- Add a sample `.env.local` file
-- Add a short CONTRIBUTING.md
-- Implement audio recording or backend token-exchange scaffold
+- Persistent chat sessions
+- Voice input with real-time transcription
+- Image upload support
+- Bilingual AI responses
+- Chat history management
+- Session restoration
+
+### Authentication
+
+- OAuth2 flow with Cognito
+- Secure token management
+- Persistent sessions
+- Language preference saving
+
+### Internationalization
+
+- Complete English/Tamil support
+- Context-aware translations
+- Weather descriptions in both languages
+- Farming terminology localization
+
+## Development Guidelines
+
+### TypeScript
+
+- Strict type checking enabled
+- Interfaces defined in `types.ts`
+- Type-safe API responses
+
+### State Management
+
+- Context API for auth state
+- Local state for UI components
+- Persistent storage integration
+
+### API Integration
+
+- Centralized API calls in `api.ts`
+- Error handling with fallbacks
+- Response type validation
+
+### Testing
+
+   ```bash
+   npm run typecheck  # Type checking
+   npm run lint      # ESLint
+   ```
+
+## Future Enhancements
+
+1. Offline support with service workers
+2. Push notifications for weather alerts
+3. Crop calendar integration
+4. Market price integration
+5. Community features for farmers
+6. Analytics dashboard
+7. Mobile app wrapper
+
+## Contributing
+
+1. Fork the repository
+2. Create feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit changes (`git commit -m 'Add AmazingFeature'`)
+4. Push to branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
+
+## License
+
+This project is licensed under the ISC License.
