@@ -119,35 +119,37 @@ export default function ChatSidebar({ userEmail, activeChatId, setActiveChatId, 
   };
 
   return (
-    <div className="w-64 h-full bg-gray-100 border-r p-4 flex flex-col">
+    <div className="w-full lg:w-64 h-full bg-gray-100 border-r p-3 sm:p-4 flex flex-col">
       <button
         onClick={handleNewChat}
-        className="bg-green-600 text-white py-2 rounded mb-4"
+        className="bg-green-600 text-white py-2 sm:py-3 rounded-lg text-sm sm:text-base font-medium mb-3 sm:mb-4 hover:bg-green-700 transition-colors"
       >
         + {t('newChat')}
       </button>
 
-      <div className="flex-1 overflow-y-auto mb-4">
+      <div className="flex-1 overflow-y-auto mb-3 sm:mb-4">
         {chats.length === 0 && (
-          <p className="text-gray-500 text-center">{t('noChats')}</p>
+          <p className="text-gray-500 text-center text-sm sm:text-base py-4">{t('noChats')}</p>
         )}
 
         {chats.map(chat => (
           <div
             key={chat._id}
-            className={`p-3 rounded mb-2 cursor-pointer group relative ${
+            className={`p-2 sm:p-3 rounded-lg mb-2 cursor-pointer group relative ${
               activeChatId === chat._id ? "bg-green-300" : "bg-white"
-            }`}
+            } hover:bg-green-50 transition-colors`}
             onClick={() => setActiveChatId(chat._id)}
           >
-            {chat.title || `${t('chat')} ${chat._id.slice(-4)}`}
+            <div className="pr-6 text-sm sm:text-base">
+              {chat.title || `${t('chat')} ${chat._id.slice(-4)}`}
+            </div>
             
             <button
               onClick={(e) => handleDeleteChat(chat._id, e)}
-              className="absolute right-2 top-1/2 transform -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1 text-red-500 hover:text-red-700"
+              className="absolute right-1 sm:right-2 top-1/2 transform -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1 text-red-500 hover:text-red-700"
               title={t('deleteChat')}
             >
-              <Trash2 className="w-4 h-4" />
+              <Trash2 className="w-3 h-3 sm:w-4 sm:h-4" />
             </button>
           </div>
         ))}
@@ -156,7 +158,7 @@ export default function ChatSidebar({ userEmail, activeChatId, setActiveChatId, 
       <button
         onClick={handleClearAllChats}
         disabled={chats.length === 0}
-        className={`py-2 rounded transition-colors ${
+        className={`py-2 sm:py-3 rounded-lg text-sm sm:text-base font-medium transition-colors ${
           chats.length === 0 
             ? "bg-gray-400 text-gray-200 cursor-not-allowed" 
             : "bg-red-600 text-white hover:bg-red-700"

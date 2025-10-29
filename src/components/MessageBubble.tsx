@@ -25,7 +25,7 @@ export const MessageBubble = ({ message }: MessageBubbleProps) => {
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
-        className={`max-w-[80%] rounded-3xl p-5 shadow-md ${
+        className={`max-w-[85%] sm:max-w-[80%] rounded-2xl sm:rounded-3xl p-3 sm:p-4 md:p-5 shadow-md ${
           isUser
             ? 'bg-green-600 text-white'
             : 'bg-white text-gray-800 border-2 border-gray-200'
@@ -35,13 +35,13 @@ export const MessageBubble = ({ message }: MessageBubbleProps) => {
           <img
             src={message.imageUrl}
             alt="Uploaded"
-            className="rounded-2xl mb-3 max-w-full h-auto"
+            className="rounded-xl sm:rounded-2xl mb-2 sm:mb-3 max-w-full h-auto"
           />
         )}
 
-        <p className="text-lg leading-relaxed whitespace-pre-wrap">{message.text}</p>
+        <p className="text-base sm:text-lg leading-relaxed whitespace-pre-wrap">{message.text}</p>
 
-        <div className={`flex items-center gap-2 mt-2 text-sm ${
+        <div className={`flex items-center gap-2 mt-1 sm:mt-2 text-xs sm:text-sm ${
           isUser ? 'text-green-100' : 'text-gray-500'
         }`}>
           <span>
@@ -54,10 +54,10 @@ export const MessageBubble = ({ message }: MessageBubbleProps) => {
           {message.audioUrl && (
             <button
               onClick={playAudio}
-              className="ml-2 p-2 hover:bg-opacity-20 hover:bg-black rounded-full transition-colors"
+              className="ml-1 sm:ml-2 p-1 sm:p-2 hover:bg-opacity-20 hover:bg-black rounded-full transition-colors"
               title={t('playAudio')} // CHANGED FROM HARDCODED
             >
-              <Volume2 className="w-5 h-5" />
+              <Volume2 className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
           )}
         </div>
