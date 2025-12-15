@@ -1,6 +1,6 @@
 import { Message } from '../types';
 import { Volume2 } from 'lucide-react';
-import { useTranslation } from 'react-i18next'; // ADDED
+import { useTranslation } from 'react-i18next';
 
 interface MessageBubbleProps {
   message: Message;
@@ -8,12 +8,13 @@ interface MessageBubbleProps {
 
 export const MessageBubble = ({ message }: MessageBubbleProps) => {
   const isUser = message.sender === 'user';
-  const { t } = useTranslation(); // ADDED
+  const { t } = useTranslation();
 
   // Fix: Convert timestamp string to Date object if needed
-  const timestamp = message.timestamp instanceof Date 
-    ? message.timestamp 
-    : new Date(message.timestamp);
+  const timestamp =
+    message.timestamp instanceof Date
+      ? message.timestamp
+      : new Date(message.timestamp);
 
   const playAudio = () => {
     if (message.audioUrl) {
@@ -39,15 +40,19 @@ export const MessageBubble = ({ message }: MessageBubbleProps) => {
           />
         )}
 
-        <p className="text-base sm:text-lg leading-relaxed whitespace-pre-wrap">{message.text}</p>
+        <p className="text-base sm:text-lg leading-relaxed whitespace-pre-wrap">
+          {message.text}
+        </p>
 
-        <div className={`flex items-center gap-2 mt-1 sm:mt-2 text-xs sm:text-sm ${
-          isUser ? 'text-green-100' : 'text-gray-500'
-        }`}>
+        <div
+          className={`flex items-center gap-2 mt-1 sm:mt-2 text-xs sm:text-sm ${
+            isUser ? 'text-green-100' : 'text-gray-500'
+          }`}
+        >
           <span>
             {timestamp.toLocaleTimeString([], {
               hour: '2-digit',
-              minute: '2-digit'
+              minute: '2-digit',
             })}
           </span>
 
@@ -55,7 +60,7 @@ export const MessageBubble = ({ message }: MessageBubbleProps) => {
             <button
               onClick={playAudio}
               className="ml-1 sm:ml-2 p-1 sm:p-2 hover:bg-opacity-20 hover:bg-black rounded-full transition-colors"
-              title={t('playAudio')} // CHANGED FROM HARDCODED
+              title={t('playAudio')}
             >
               <Volume2 className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>

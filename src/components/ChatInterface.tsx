@@ -16,9 +16,9 @@ interface Props {
 export const ChatInterface = ({ activeChatId, setActiveChatId, onMessageSent }: Props) => {
   const { t, i18n } = useTranslation();
   const { user, logout, language, setLanguage } = useAuth();
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
-  const [isRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showLangMenu, setShowLangMenu] = useState(false);
 
@@ -29,108 +29,72 @@ export const ChatInterface = ({ activeChatId, setActiveChatId, onMessageSent }: 
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+  useEffect(scrollToBottom, [messages]);
 
-  // Clear input when chat changes
   useEffect(() => {
     setInput('');
   }, [activeChatId]);
 
-  // Load chat messages when chat changes
   useEffect(() => {
     if (!activeChatId) return;
+
     const fetchMessages = async () => {
       try {
         const res = await fetch(`${import.meta.env.VITE_API_URL}/chatsessions/${activeChatId}`);
         const data = await res.json();
         setMessages(data.data?.session?.messages || []);
       } catch (err) {
-        console.error("Failed to load messages:", err);
+        console.error('Failed to load messages:', err);
       }
     };
+
     fetchMessages();
   }, [activeChatId]);
 
   const handleSend = async () => {
     if (!input.trim()) return;
 
-    console.log('🔴 DEBUG: Sending message, activeChatId:', activeChatId);
-
-    const textToSend = input;
-
     const userMessage: Message = {
-      id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      text: textToSend,
+      id: `user-${Date.now()}`,
+      text: input,
       sender: 'user',
       timestamp: new Date()
     };
 
     setMessages(prev => [...prev, userMessage]);
     setInput('');
-
     setIsProcessing(true);
 
     try {
-      const responseData = await sendChatMessage(
-        textToSend,
-        language,
-        activeChatId,
-        user?.email
-      );
-
-      console.log('🟡 DEBUG: Backend response:', responseData);
+      const responseData = await sendChatMessage(input, language, activeChatId, user?.email);
 
       if (!activeChatId && responseData.data?.chatId) {
-        console.log('🟠 DEBUG: Setting new activeChatId:', responseData.data.chatId);
         setActiveChatId(responseData.data.chatId);
       }
 
-      const replyText =
-        responseData?.data?.response && responseData.data.response.trim() !== ''
-          ? responseData.data.response
-          : 'No response received.';
-
       const aiMessage: Message = {
-        id: `ai-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        text: replyText,
+        id: `ai-${Date.now()}`,
+        text: responseData?.data?.response || 'No response received.',
         sender: 'ai',
         timestamp: new Date()
       };
 
       setMessages(prev => [...prev, aiMessage]);
+      onMessageSent?.();
 
-      console.log('🟢 DEBUG: Calling onMessageSent callback');
-      if (onMessageSent) onMessageSent();
-
-    } catch (error) {
-      const errorMsg = 'Server error. Please try again.';
-      const errorMessage: Message = {
-        id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        text: errorMsg,
-        sender: 'ai',
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, errorMessage]);
+    } catch {
+      setMessages(prev => [
+        ...prev,
+        {
+          id: `error-${Date.now()}`,
+          text: 'Server error. Please try again.',
+          sender: 'ai',
+          timestamp: new Date()
+        }
+      ]);
     }
 
     setIsProcessing(false);
-  };
-
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const imageUrl = URL.createObjectURL(file);
-      const userMessage: Message = {
-        id: `image-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        text: language === 'ta' ? 'படம் பதிவேற்றப்பட்டது' : 'Image uploaded',
-        sender: 'user',
-        timestamp: new Date(),
-        imageUrl
-      };
-      setMessages(prev => [...prev, userMessage]);
-    }
   };
 
   const toggleLanguage = () => {
@@ -140,47 +104,41 @@ export const ChatInterface = ({ activeChatId, setActiveChatId, onMessageSent }: 
     setShowLangMenu(false);
   };
 
-  // Handle voice input result - replace input completely
   const handleVoiceResult = (text: string) => {
     setInput(text);
   };
 
   return (
-    <div className="flex flex-col h-screen bg-gradient-to-b from-green-50 to-white">
-      <div className="bg-green-600 text-white p-3 sm:p-4 shadow-lg">
+    <div className="flex flex-col min-h-[100dvh] bg-gradient-to-b from-green-50 to-white overflow-hidden">
+      
+      {/* HEADER */}
+      <div className="bg-green-600 text-white px-3 py-3 sm:p-4 shadow-lg">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-2 sm:gap-3">
-            <div className="w-8 h-8 sm:w-12 sm:h-12 bg-white rounded-full flex items-center justify-center">
-              <span className="text-lg sm:text-2xl">🌾</span>
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 sm:w-12 sm:h-12 bg-white rounded-full flex items-center justify-center">
+              <span className="text-xl sm:text-2xl">🌾</span>
             </div>
             <div>
-              <h1 className="text-lg sm:text-xl font-bold">{t('welcome')}</h1>
-              <p className="text-xs sm:text-sm text-green-100">{user?.name}</p>
+              <h1 className="text-base sm:text-xl font-bold">{t('welcome')}</h1>
+              <p className="text-xs sm:text-sm text-green-100 truncate">{user?.name}</p>
             </div>
           </div>
 
-          <div className="flex gap-1 sm:gap-2">
-            <button
-              onClick={() => setShowLangMenu(!showLangMenu)}
-              className="p-2 sm:p-3 hover:bg-green-700 rounded-xl transition-colors"
-            >
-              <Languages className="w-5 h-5 sm:w-6 sm:h-6" />
+          <div className="flex gap-1">
+            <button onClick={() => setShowLangMenu(!showLangMenu)} className="p-2 hover:bg-green-700 rounded-xl">
+              <Languages className="w-5 h-5" />
             </button>
-
-            <button
-              onClick={logout}
-              className="p-2 sm:p-3 hover:bg-green-700 rounded-xl transition-colors"
-            >
-              <LogOut className="w-5 h-5 sm:w-6 sm:h-6" />
+            <button onClick={logout} className="p-2 hover:bg-green-700 rounded-xl">
+              <LogOut className="w-5 h-5" />
             </button>
           </div>
         </div>
 
         {showLangMenu && (
-          <div className="max-w-4xl mx-auto mt-2 sm:mt-3 bg-white rounded-xl shadow-lg overflow-hidden">
+          <div className="max-w-4xl mx-auto mt-2 bg-white rounded-xl shadow overflow-hidden">
             <button
               onClick={toggleLanguage}
-              className="w-full p-3 sm:p-4 text-left text-gray-800 hover:bg-green-50 transition-colors font-semibold text-base sm:text-lg"
+              className="w-full p-3 text-left text-gray-800 hover:bg-green-50 font-semibold"
             >
               {language === 'en' ? 'தமிழ் (Tamil)' : 'English'}
             </button>
@@ -188,16 +146,17 @@ export const ChatInterface = ({ activeChatId, setActiveChatId, onMessageSent }: 
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-3 sm:p-4">
-        <div className="max-w-4xl mx-auto space-y-3 sm:space-y-4">
-          {messages.map((message, index) => (
-            <MessageBubble key={`${message.id}-${index}`} message={message} />
+      {/* CHAT BODY */}
+      <div className="flex-1 overflow-y-auto px-3 py-4">
+        <div className="max-w-4xl mx-auto space-y-4">
+          {messages.map((m, i) => (
+            <MessageBubble key={`${m.id}-${i}`} message={m} />
           ))}
 
           {isProcessing && (
-            <div className="flex items-center gap-2 sm:gap-3 text-gray-600">
-              <Loader2 className="w-5 h-5 sm:w-6 sm:h-6 animate-spin" />
-              <span className="text-base sm:text-lg">{t('processing')}</span>
+            <div className="flex items-center gap-2 text-gray-600">
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span>{t('processing')}</span>
             </div>
           )}
 
@@ -205,55 +164,38 @@ export const ChatInterface = ({ activeChatId, setActiveChatId, onMessageSent }: 
         </div>
       </div>
 
-      <div className="bg-white border-t-2 border-gray-200 p-3 sm:p-4 shadow-lg">
-        <div className="max-w-4xl mx-auto">
-          <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-end">
-            <div className="flex gap-2 sm:gap-3 order-2 sm:order-1">
-              <VoiceRecorder 
-                onResult={handleVoiceResult}
-              />
-
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="p-4 sm:p-5 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl transition-all shadow-lg flex items-center justify-center"
-              >
-                <ImageIcon className="w-5 h-5 sm:w-8 sm:h-8" />
-              </button>
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleImageUpload}
-                className="hidden"
-              />
-            </div>
-
-            <div className="flex-1 flex gap-2 sm:gap-3 order-1 sm:order-2">
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                placeholder={t('typeMessage')}
-                className="flex-1 p-3 sm:p-5 border-2 border-gray-300 rounded-2xl text-base sm:text-lg"
-              />
-
-              <button
-                onClick={handleSend}
-                disabled={!input.trim()}
-                className="p-3 sm:p-5 bg-green-600 text-white rounded-2xl shadow-lg disabled:bg-gray-400 flex items-center justify-center"
-              >
-                <Send className="w-5 h-5 sm:w-8 sm:h-8" />
-              </button>
-            </div>
+      {/* INPUT BAR – MOBILE SAFE */}
+      <div className="sticky bottom-0 bg-white border-t border-gray-200 px-3 py-3">
+        <div className="max-w-4xl mx-auto flex flex-col gap-2 sm:flex-row">
+          
+          <div className="flex gap-2">
+            <VoiceRecorder onResult={handleVoiceResult} />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="p-3 bg-blue-600 text-white rounded-xl"
+            >
+              <ImageIcon className="w-5 h-5" />
+            </button>
+            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" />
           </div>
 
-          {isRecording && (
-            <div className="mt-2 sm:mt-3 text-center text-red-600 font-semibold text-base sm:text-lg animate-pulse">
-              {t('recording')}
-            </div>
-          )}
+          <div className="flex gap-2 flex-1">
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+              placeholder={t('typeMessage')}
+              className="flex-1 p-3 border rounded-xl text-base"
+            />
+            <button
+              onClick={handleSend}
+              disabled={!input.trim()}
+              className="p-3 bg-green-600 text-white rounded-xl disabled:bg-gray-400"
+            >
+              <Send className="w-5 h-5" />
+            </button>
+          </div>
+
         </div>
       </div>
     </div>
