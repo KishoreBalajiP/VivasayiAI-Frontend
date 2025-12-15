@@ -11,7 +11,7 @@ interface Props {
   activeChatId: string | null;
   setActiveChatId: (id: string | null) => void;
   onMessageSent?: () => void;
-  onOpenSidebar: () => void; // ✅ mobile hamburger action
+  onOpenSidebar?: () => void;
 }
 
 export const ChatInterface = ({
@@ -31,6 +31,7 @@ export const ChatInterface = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // ✅ AUTO SCROLL ONLY MESSAGE AREA
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -48,16 +49,14 @@ export const ChatInterface = ({
   const handleSend = async () => {
     if (!input.trim()) return;
 
-    setMessages(prev => [
-      ...prev,
-      {
-        id: `user-${Date.now()}`,
-        text: input,
-        sender: 'user',
-        timestamp: new Date(),
-      },
-    ]);
+    const userMessage: Message = {
+      id: `user-${Date.now()}`,
+      text: input,
+      sender: 'user',
+      timestamp: new Date(),
+    };
 
+    setMessages(prev => [...prev, userMessage]);
     setInput('');
     setIsProcessing(true);
 
@@ -102,24 +101,23 @@ export const ChatInterface = ({
   };
 
   return (
-    <div className="flex flex-col min-h-[100dvh] bg-gradient-to-b from-green-50 to-white">
+    // ✅ FIXED HEIGHT CONTAINER (NO PAGE SCROLL)
+    <div className="flex flex-col h-screen bg-gradient-to-b from-green-50 to-white overflow-hidden">
 
-      {/* HEADER */}
-      <header className="bg-green-600 text-white px-3 py-2 shadow-lg">
+      {/* ✅ STICKY HEADER */}
+      <header className="sticky top-0 z-30 bg-green-600 text-white px-3 py-2 shadow-lg">
         <div className="flex items-center justify-between max-w-4xl mx-auto">
 
-          {/* LEFT */}
           <div className="flex items-center gap-2 overflow-hidden">
             {/* ☰ Hamburger */}
             <button
               onClick={onOpenSidebar}
               className="lg:hidden p-2 hover:bg-green-700 rounded-lg"
-              aria-label="Open chats"
             >
               ☰
             </button>
 
-            {/* 🌾 LOGO */}
+            {/* Logo */}
             <div className="w-9 h-9 sm:w-11 sm:h-11 bg-white rounded-full flex items-center justify-center">
               <span className="text-xl sm:text-2xl">🌾</span>
             </div>
@@ -134,7 +132,6 @@ export const ChatInterface = ({
             </div>
           </div>
 
-          {/* RIGHT */}
           <div className="flex items-center gap-1">
             <button
               onClick={() => setShowLangMenu(!showLangMenu)}
@@ -143,7 +140,6 @@ export const ChatInterface = ({
               <Languages className="w-5 h-5" />
             </button>
 
-            {/* ✅ LOGOUT VISIBLE ON MOBILE */}
             <button
               onClick={logout}
               className="p-2 hover:bg-green-700 rounded-lg"
@@ -165,7 +161,7 @@ export const ChatInterface = ({
         )}
       </header>
 
-      {/* CHAT BODY */}
+      {/* ✅ SCROLLABLE CHAT BODY ONLY */}
       <main className="flex-1 overflow-y-auto px-3 py-4">
         <div className="max-w-4xl mx-auto space-y-4">
           {messages.map((m, i) => (
@@ -183,8 +179,8 @@ export const ChatInterface = ({
         </div>
       </main>
 
-      {/* INPUT BAR */}
-      <footer className="sticky bottom-0 bg-white border-t border-gray-200 px-3 py-3">
+      {/* ✅ FIXED INPUT BAR */}
+      <footer className="bg-white border-t border-gray-200 px-3 py-3">
         <div className="max-w-4xl mx-auto flex flex-col sm:flex-row gap-2">
           <div className="flex gap-2">
             <VoiceRecorder onResult={setInput} />
