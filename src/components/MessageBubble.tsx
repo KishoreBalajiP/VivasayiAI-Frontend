@@ -69,4 +69,4 @@ export const MessageBubble = ({ message }: MessageBubbleProps) => {
       </div>
     </div>
   );
-};
+}; 
