@@ -11,10 +11,14 @@ import { Toaster } from 'sonner';
 function App() {
   const { user, language, isLoading } = useAuth();
   const { i18n } = useTranslation();
+
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [refreshChats, setRefreshChats] = useState(false);
 
-  // Sync i18n with auth language on component mount
+  // ✅ SHARED SIDEBAR STATE (THIS WAS MISSING)
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // Sync i18n with auth language
   useEffect(() => {
     if (language && i18n.language !== language) {
       i18n.changeLanguage(language);
@@ -37,27 +41,31 @@ function App() {
 
   return (
     <>
-      <div className="flex h-screen">
-        {/* Sidebar */}
+      <div className="flex h-screen overflow-hidden">
+
+        {/* SIDEBAR */}
         <ChatSidebar
           userEmail={user.email}
           activeChatId={activeChatId}
           setActiveChatId={setActiveChatId}
           refreshChats={refreshChats}
+          isOpen={isSidebarOpen}          // ✅ CONNECTED
+          setIsOpen={setIsSidebarOpen}    // ✅ CONNECTED
         />
 
-        {/* Chat Window */}
+        {/* CHAT WINDOW */}
         <div className="flex-1">
-          <ChatInterface 
+          <ChatInterface
             activeChatId={activeChatId}
             setActiveChatId={setActiveChatId}
             onMessageSent={() => setRefreshChats(prev => !prev)}
+            onOpenSidebar={() => setIsSidebarOpen(true)} // ✅ HAMBURGER WORKS
           />
         </div>
       </div>
 
-      {/* Sonner Toaster */}
-      <Toaster 
+      {/* TOASTER */}
+      <Toaster
         position="top-right"
         duration={3000}
         richColors
