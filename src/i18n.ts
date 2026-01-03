@@ -29,6 +29,10 @@ const resources = {
       deleteChat: 'Delete chat',
       clearAllChats: 'Clear All Chats',
       chat: 'Chat',
+      appTitle: 'Tamil Nadu Farming Assistant',
+speak: 'Speak',
+stop: 'Stop',
+micError: 'Microphone error',
 
       // Add to English section - Toast Messages
 chatCreated: 'New chat created successfully!',
@@ -210,6 +214,10 @@ allDeleted: 'அனைத்து உரையாடல்களும் வ�
       deleteChat: 'உரையாடலை நீக்கு',
       clearAllChats: 'அனைத்து உரையாடல்களையும் நீக்கு',
       chat: 'உரையாடல்',
+      appTitle: 'தமிழ்நாடு விவசாய உதவியாளர்',
+speak: 'பேசவும்',
+stop: 'நிறுத்தவும்',
+micError: 'மைக்ரோஃபோன் பிழை',
       
       // Confirmation Dialogs
       deleteConfirm: 'இந்த உரையாடலை நீக்க விரும்புகிறீர்களா?',
