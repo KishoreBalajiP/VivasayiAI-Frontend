@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import useSpeechToText from "react-hook-speech-to-text";
 
 interface VoiceRecorderProps {
@@ -6,6 +7,8 @@ interface VoiceRecorderProps {
 }
 
 export default function VoiceRecorder({ onResult }: VoiceRecorderProps) {
+  const { t } = useTranslation();
+
   const {
     error,
     isRecording,
@@ -17,12 +20,11 @@ export default function VoiceRecorder({ onResult }: VoiceRecorderProps) {
     continuous: true,
     useLegacyResults: false,
     crossBrowser: true,
-    timeout: 3000, // 3-second timeout
+    timeout: 3000,
   });
 
   const lastTranscriptRef = useRef('');
 
-  // Clear everything when starting new recording
   useEffect(() => {
     if (isRecording) {
       setResults([]);
@@ -31,7 +33,6 @@ export default function VoiceRecorder({ onResult }: VoiceRecorderProps) {
     }
   }, [isRecording, onResult, setResults]);
 
-  // Update input in real-time as speech is recognized
   useEffect(() => {
     if (results.length > 0 && isRecording) {
       const latestResult = results[results.length - 1];
@@ -40,43 +41,35 @@ export default function VoiceRecorder({ onResult }: VoiceRecorderProps) {
           ? latestResult
           : latestResult.transcript;
 
-      const trimmedTranscript = transcript.trim();
-
-      if (
-        trimmedTranscript &&
-        trimmedTranscript !== lastTranscriptRef.current
-      ) {
-        lastTranscriptRef.current = trimmedTranscript;
-        onResult(trimmedTranscript);
+      const trimmed = transcript.trim();
+      if (trimmed && trimmed !== lastTranscriptRef.current) {
+        lastTranscriptRef.current = trimmed;
+        onResult(trimmed);
       }
     }
   }, [results, isRecording, onResult]);
 
   const handleToggleRecording = () => {
-    if (isRecording) {
-      stopSpeechToText();
-    } else {
-      startSpeechToText();
-    }
+    isRecording ? stopSpeechToText() : startSpeechToText();
   };
 
   return (
     <div className="flex items-center justify-center sm:justify-start gap-2">
       <button
         onClick={handleToggleRecording}
+        type="button"
         className={`p-4 sm:p-5 md:p-6 rounded-xl sm:rounded-2xl transition-all shadow-lg text-sm sm:text-base ${
           isRecording
             ? 'bg-red-600 animate-pulse text-white'
             : 'bg-green-600 text-white hover:bg-green-700'
         }`}
-        type="button"
       >
-        {isRecording ? "🛑 Stop" : "🎤 Speak"}
+        {isRecording ? ` ${t('stop')}` : ` ${t('speak')}`}
       </button>
 
       {error && (
         <p className="text-red-500 text-xs sm:text-sm">
-          Microphone error: {error}
+          {t('micError')}: {error}
         </p>
       )}
     </div>

@@ -124,7 +124,7 @@ export const ChatInterface = ({
 
             <div className="overflow-hidden">
               <h1 className="text-sm sm:text-lg font-bold truncate">
-                Tamil Nadu Farming Assistant
+                {t('appTitle')}
               </h1>
               <p className="hidden sm:block text-xs text-green-100 truncate">
                 {user?.email}
