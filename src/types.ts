@@ -6,14 +6,22 @@ export interface User {
   createdAt?: Date;
 }
 
+export interface ImageAttachment {
+  previewUrl: string;
+  file: File;
+}
+
 export interface Message {
   id: string;
-  text: string;
   sender: 'user' | 'ai';
   timestamp: Date;
+  text?: string;
+  image?: ImageAttachment;
   audioUrl?: string;
+  // For backend-loaded images later
   imageUrl?: string;
 }
+
 
 export interface ChatSession {
   _id: string;

@@ -10,7 +10,7 @@ export const MessageBubble = ({ message }: MessageBubbleProps) => {
   const isUser = message.sender === 'user';
   const { t } = useTranslation();
 
-  // Fix: Convert timestamp string to Date object if needed
+  // Convert timestamp string to Date object if needed
   const timestamp =
     message.timestamp instanceof Date
       ? message.timestamp
@@ -32,7 +32,17 @@ export const MessageBubble = ({ message }: MessageBubbleProps) => {
             : 'bg-white text-gray-800 border-2 border-gray-200'
         }`}
       >
-        {message.imageUrl && (
+        {/* 🔹 FRONTEND IMAGE PREVIEW (before backend) */}
+        {message.image?.previewUrl && (
+          <img
+            src={message.image.previewUrl}
+            alt="Uploaded"
+            className="rounded-xl sm:rounded-2xl mb-2 sm:mb-3 max-w-full h-auto"
+          />
+        )}
+
+        {/* 🔹 BACKEND IMAGE (future support) */}
+        {!message.image?.previewUrl && message.imageUrl && (
           <img
             src={message.imageUrl}
             alt="Uploaded"
@@ -40,10 +50,14 @@ export const MessageBubble = ({ message }: MessageBubbleProps) => {
           />
         )}
 
-        <p className="text-base sm:text-lg leading-relaxed whitespace-pre-wrap">
-          {message.text}
-        </p>
+        {/* 🔹 TEXT (optional) */}
+        {message.text && (
+          <p className="text-base sm:text-lg leading-relaxed whitespace-pre-wrap">
+            {message.text}
+          </p>
+        )}
 
+        {/* 🔹 TIMESTAMP + AUDIO */}
         <div
           className={`flex items-center gap-2 mt-1 sm:mt-2 text-xs sm:text-sm ${
             isUser ? 'text-green-100' : 'text-gray-500'
@@ -70,4 +84,3 @@ export const MessageBubble = ({ message }: MessageBubbleProps) => {
     </div>
   );
 };
- 

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
-import { Message } from '../types';
+import { Message, ImageAttachment } from '../types';
 import { Send, Image as ImageIcon, LogOut, Languages, Loader2 } from 'lucide-react';
 import { MessageBubble } from './MessageBubble';
 import { sendChatMessage } from '../api';
@@ -25,6 +25,7 @@ export const ChatInterface = ({
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
+  const [selectedImage, setSelectedImage] = useState<ImageAttachment | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showLangMenu, setShowLangMenu] = useState(false);
 
@@ -47,21 +48,29 @@ export const ChatInterface = ({
   }, [activeChatId]);
 
   const handleSend = async () => {
-    if (!input.trim()) return;
+    if (!input.trim() && !selectedImage) return;
 
     const userMessage: Message = {
       id: `user-${Date.now()}`,
-      text: input,
       sender: 'user',
       timestamp: new Date(),
+      text: input || undefined,
+      image: selectedImage || undefined,
     };
 
     setMessages(prev => [...prev, userMessage]);
     setInput('');
+    setSelectedImage(null);
     setIsProcessing(true);
 
     try {
-      const res = await sendChatMessage(input, language, activeChatId, user?.email);
+      // Backend currently supports TEXT only
+      const res = await sendChatMessage(
+        userMessage.text || '',
+        language,
+        activeChatId,
+        user?.email
+      );
 
       if (!activeChatId && res.data?.chatId) {
         setActiveChatId(res.data.chatId);
@@ -101,15 +110,13 @@ export const ChatInterface = ({
   };
 
   return (
-    // ✅ FIXED HEIGHT CONTAINER (NO PAGE SCROLL)
     <div className="flex flex-col h-screen bg-gradient-to-b from-green-50 to-white overflow-hidden">
 
-      {/* ✅ STICKY HEADER */}
+      {/* HEADER */}
       <header className="sticky top-0 z-30 bg-green-600 text-white px-3 py-2 shadow-lg">
         <div className="flex items-center justify-between max-w-4xl mx-auto">
 
           <div className="flex items-center gap-2 overflow-hidden">
-            {/* ☰ Hamburger */}
             <button
               onClick={onOpenSidebar}
               className="lg:hidden p-2 hover:bg-green-700 rounded-lg"
@@ -117,7 +124,6 @@ export const ChatInterface = ({
               ☰
             </button>
 
-            {/* Logo */}
             <div className="w-9 h-9 sm:w-11 sm:h-11 bg-white rounded-full flex items-center justify-center">
               <span className="text-xl sm:text-2xl">🌾</span>
             </div>
@@ -161,7 +167,7 @@ export const ChatInterface = ({
         )}
       </header>
 
-      {/* ✅ SCROLLABLE CHAT BODY ONLY */}
+      {/* CHAT BODY */}
       <main className="flex-1 overflow-y-auto px-3 py-4">
         <div className="max-w-4xl mx-auto space-y-4">
           {messages.map((m, i) => (
@@ -179,35 +185,71 @@ export const ChatInterface = ({
         </div>
       </main>
 
-      {/* ✅ FIXED INPUT BAR */}
+      {/* INPUT BAR */}
       <footer className="bg-white border-t border-gray-200 px-3 py-3">
-        <div className="max-w-4xl mx-auto flex flex-col sm:flex-row gap-2">
-          <div className="flex gap-2">
-            <VoiceRecorder onResult={setInput} />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="p-3 bg-blue-600 text-white rounded-xl"
-            >
-              <ImageIcon className="w-5 h-5" />
-            </button>
-            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" />
-          </div>
+        <div className="max-w-4xl mx-auto">
 
-          <div className="flex gap-2 flex-1">
-            <input
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSend()}
-              placeholder={t('typeMessage')}
-              className="flex-1 p-3 border rounded-xl"
-            />
-            <button
-              onClick={handleSend}
-              disabled={!input.trim()}
-              className="p-3 bg-green-600 text-white rounded-xl disabled:bg-gray-400"
-            >
-              <Send className="w-5 h-5" />
-            </button>
+          {/* IMAGE PREVIEW (ChatGPT-style) */}
+          {selectedImage && (
+            <div className="mb-2 relative w-fit">
+              <img
+                src={selectedImage.previewUrl}
+                alt="preview"
+                className="max-w-[160px] rounded-xl border"
+              />
+              <button
+                onClick={() => setSelectedImage(null)}
+                className="absolute -top-2 -right-2 bg-black text-white rounded-full w-6 h-6 text-sm"
+              >
+                ×
+              </button>
+            </div>
+          )}
+
+          <div className="flex flex-col sm:flex-row gap-2">
+            <div className="flex gap-2">
+              <VoiceRecorder onResult={setInput} />
+
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="p-3 bg-blue-600 text-white rounded-xl"
+              >
+                <ImageIcon className="w-5 h-5" />
+              </button>
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+
+                  setSelectedImage({
+                    file,
+                    previewUrl: URL.createObjectURL(file),
+                  });
+                }}
+              />
+            </div>
+
+            <div className="flex gap-2 flex-1">
+              <input
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleSend()}
+                placeholder={t('typeMessage')}
+                className="flex-1 p-3 border rounded-xl"
+              />
+              <button
+                onClick={handleSend}
+                disabled={!input.trim() && !selectedImage}
+                className="p-3 bg-green-600 text-white rounded-xl disabled:bg-gray-400"
+              >
+                <Send className="w-5 h-5" />
+              </button>
+            </div>
           </div>
         </div>
       </footer>
