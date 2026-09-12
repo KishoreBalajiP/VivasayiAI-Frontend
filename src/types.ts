@@ -23,10 +23,11 @@ export interface Message {
 }
 
 
+// Frontend-only mirror kept for reference; the backend drives ownership from the token's
+// cognitoSub and never expects/returns userEmail.
 export interface ChatSession {
   _id: string;
   title: string;
-  userEmail: string;
   messages: Message[];
   createdAt: string;
   updatedAt: string;
@@ -58,4 +59,31 @@ export interface DailyForecast {
   rainfall: number;
   farmingTip: string;
   icon: string;
+}
+
+// Standard backend response envelope: every endpoint (success or error) returns
+// { statusCode, message, data } — see backend utils/ApiResponse.js + middlewares/error.js.
+export interface ApiEnvelope<T = unknown> {
+  statusCode: number;
+  message: string;
+  data: T;
+}
+
+// The user returned by the backend after POST /auth/google. Ownership derives from the
+// token's cognitoSub server-side — this object is for display only.
+export interface BackendUser {
+  _id?: string;
+  name?: string;
+  email?: string;
+  cognitoSub?: string;
+  createdAt?: string;
+}
+
+// Backend-issued session tokens (E1-S3). The access token is the ONLY credential the
+// frontend uses for protected APIs (Authorization: Bearer). The refresh token is ignored
+// for now — the backend does not expose a /auth/refresh endpoint yet.
+export interface BackendAuthResponse {
+  user: BackendUser;
+  accessToken: string;
+  refreshToken?: string;
 }

@@ -45,7 +45,6 @@ function App() {
 
         {/* SIDEBAR */}
         <ChatSidebar
-          userEmail={user.email}
           activeChatId={activeChatId}
           setActiveChatId={setActiveChatId}
           refreshChats={refreshChats}

@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Trash2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { config } from '../config';
 
 interface Chat {
   _id: string;
@@ -10,7 +11,6 @@ interface Chat {
 }
 
 interface Props {
-  userEmail: string;
   activeChatId: string | null;
   setActiveChatId: (id: string | null) => void;
   refreshChats: boolean;
@@ -19,7 +19,6 @@ interface Props {
 }
 
 export default function ChatSidebar({
-  userEmail,
   activeChatId,
   setActiveChatId,
   refreshChats,
@@ -29,29 +28,24 @@ export default function ChatSidebar({
   const [chats, setChats] = useState<Chat[]>([]);
   const { t } = useTranslation();
 
-  const fetchChats = async () => {
-    if (!userEmail) return;
-    const res = await fetch(
-      `${import.meta.env.VITE_API_URL}/chatsessions/list/${userEmail}`
-    );
+  const fetchChats = useCallback(async () => {
+    // Ownership derives from the authenticated token — the identity is never in the URL/body.
+    const res = await fetch(`${config.apiUrl}/chatsessions/list`);
     const data = await res.json();
     setChats(data.data?.sessions || []);
-  };
+  }, []);
 
   useEffect(() => {
     fetchChats();
-  }, [userEmail, refreshChats]);
+  }, [fetchChats, refreshChats]);
 
   const handleNewChat = async () => {
     try {
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/chatsessions/new`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userEmail }),
-        }
-      );
+      const res = await fetch(`${config.apiUrl}/chatsessions/new`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
 
       const data = await res.json();
       const newSession = data.data?.session;
@@ -73,14 +67,9 @@ export default function ChatSidebar({
     e.stopPropagation();
 
     try {
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/chatsessions/${chatId}`,
-        {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userEmail }),
-        }
-      );
+      const res = await fetch(`${config.apiUrl}/chatsessions/${chatId}`, {
+        method: 'DELETE',
+      });
 
       if (res.ok) {
         setChats(prev => prev.filter(c => c._id !== chatId));
@@ -96,14 +85,9 @@ export default function ChatSidebar({
     if (chats.length === 0) return;
 
     try {
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/chatsessions/clear/all`,
-        {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userEmail }),
-        }
-      );
+      const res = await fetch(`${config.apiUrl}/chatsessions/clear/all`, {
+        method: 'DELETE',
+      });
 
       if (res.ok) {
         setChats([]);

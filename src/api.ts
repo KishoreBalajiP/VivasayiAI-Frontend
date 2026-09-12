@@ -1,43 +1,39 @@
+import { request } from './api/client';
+import type { ApiEnvelope } from './types';
+
+export interface ChatResult {
+  chatId: string;
+  messages: Array<{
+    sender: string;
+    text: string;
+    timestamp?: string;
+    imageId?: string;
+  }>;
+  response: string;
+  hasContext?: boolean;
+  hasChatHistory?: boolean;
+  sourceCount?: number;
+  timestamp?: string;
+  session?: unknown;
+}
+
+// Owned by the authenticated backend token — identity is NEVER sent in the body.
+interface ChatMessageInput {
+  message: string;
+  language: 'en' | 'ta';
+  chatId?: string;
+}
+
 export const sendChatMessage = async (
   message: string,
   language: string,
-  chatId?: string | null,
-  userEmail?: string | null
-) => {
-  try {
-    const baseUrl = import.meta.env.VITE_API_URL;
+  chatId?: string | null
+): Promise<ApiEnvelope<ChatResult>> => {
+  const payload: ChatMessageInput = {
+    message,
+    language: language === 'ta' ? 'ta' : 'en',
+  };
+  if (chatId) payload.chatId = chatId;
 
-    // Build request body dynamically
-    const payload: any = {
-      message,
-      language,
-    };
-
-    // Only send chatId when continuing an existing chat
-    if (chatId) payload.chatId = chatId;
-
-    // Only send userEmail when creating first chat
-    if (userEmail) payload.userEmail = userEmail;
-
-    const res = await fetch(`${baseUrl}/chat`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(payload)
-    });
-
-    if (!res.ok) {
-      console.error("Backend returned:", res.status);
-      return { response: "Server error. Try again." };
-    }
-
-    const data = await res.json();
-    console.log("AI Response:", data);
-    return data;
-
-  } catch (err) {
-    console.error("Network/Request error:", err);
-    return { response: "Network error. Try again." };
-  }
+  return request<ChatResult>('/chat', { method: 'POST', body: payload });
 };

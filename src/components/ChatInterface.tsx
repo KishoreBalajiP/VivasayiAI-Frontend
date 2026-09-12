@@ -5,6 +5,7 @@ import { Message, ImageAttachment } from '../types';
 import { Send, Image as ImageIcon, LogOut, Languages, Loader2 } from 'lucide-react';
 import { MessageBubble } from './MessageBubble';
 import { sendChatMessage } from '../api';
+import { request } from '../api/client';
 import VoiceRecorder from './VoiceRecorder';
 
 interface Props {
@@ -41,8 +42,10 @@ export const ChatInterface = ({
 
   useEffect(() => {
     if (!activeChatId) return;
-    fetch(`${import.meta.env.VITE_API_URL}/chatsessions/${activeChatId}`)
-      .then(res => res.json())
+    // Routed through the authenticated client so the Backend access token is attached.
+    request<{ session: { messages: Message[] } }>(
+      `/chatsessions/${activeChatId}`
+    )
       .then(data => setMessages(data.data?.session?.messages || []))
       .catch(() => {});
   }, [activeChatId]);
@@ -64,12 +67,11 @@ export const ChatInterface = ({
     setIsProcessing(true);
 
     try {
-      // Backend currently supports TEXT only
+      // Owned by the authenticated token — no userEmail/cognitoSub/userId is sent.
       const res = await sendChatMessage(
         userMessage.text || '',
         language,
-        activeChatId,
-        user?.email
+        activeChatId
       );
 
       if (!activeChatId && res.data?.chatId) {

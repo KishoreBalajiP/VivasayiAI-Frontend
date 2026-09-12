@@ -10,6 +10,15 @@ const resources = {
       loginWithGoogle: 'Login with Google',
       askQuestion: 'Ask me anything about farming',
       logout: 'Logout',
+
+      // Authentication states & errors (Phase 1)
+      loginFailed: 'Login failed. Please try again.',
+      authExpired: 'Authentication expired. Please sign in again.',
+      signingIn: 'Signing in...',
+      authInvalidCallback: 'Sign-in could not be completed. Please try again.',
+      authMisconfigured: 'Sign-in is not configured yet. Please contact support.',
+      rateLimited: 'Too many requests. Please try again later.',
+      notFound: 'Not found.',
       
       // Languages
       english: 'English',
@@ -189,6 +198,15 @@ allDeleted: 'All chats cleared successfully!',
       loginWithGoogle: 'Google மூலம் உள்நுழைக',
       askQuestion: 'விவசாயம் பற்றி என்னிடம் கேளுங்கள்',
       logout: 'வெளியேறு',
+
+      // Authentication states & errors (Phase 1)
+      loginFailed: 'உள்நுழைவு தோல்வி. மீண்டும் முயற்சிக்கவும்.',
+      authExpired: 'அங்கீகாரம் காலாவதியானது. மீண்டும் உள்நுழைக.',
+      signingIn: 'உள்நுழைகிறது...',
+      authInvalidCallback: 'உள்நுழைவை முடிக்க முடியவில்லை. மீண்டும் முயற்சிக்கவும்.',
+      authMisconfigured: 'உள்நுழைவு இன்னும் கட்டமைக்கப்படவில்லை. ஆதரவை தொடர்பு கொள்ளவும்.',
+      rateLimited: 'அதிக கோரிக்கைகள். சிறிது நேரம் கழித்து முயற்சிக்கவும்.',
+      notFound: 'கிடைக்கவில்லை.',
       
       // Languages
       english: 'English',
