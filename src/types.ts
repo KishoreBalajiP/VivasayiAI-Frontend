@@ -17,9 +17,6 @@ export interface Message {
   timestamp: Date;
   text?: string;
   image?: ImageAttachment;
-  audioUrl?: string;
-  // For backend-loaded images later
-  imageUrl?: string;
   // Backend-returned image diagnosis block (POST /chat image path). Present only on AI
   // messages produced from an image turn. Shape mirrors the backend response exactly.
   diagnosis?: ImageAnalysisResult;

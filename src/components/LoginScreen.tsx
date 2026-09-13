@@ -4,7 +4,7 @@ import { Loader2 } from 'lucide-react';
 
 export const LoginScreen = () => {
   const { t } = useTranslation();
-  const { login, language, isAuthenticating, authError } = useAuth();
+  const { login, isAuthenticating, authError } = useAuth();
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-green-50 to-green-100 flex items-center justify-center p-3 sm:p-4">
@@ -60,9 +60,7 @@ export const LoginScreen = () => {
             </button>
 
             <div className="mt-4 sm:mt-6 text-center text-xs sm:text-sm text-gray-500">
-              {language === 'en'
-                ? 'Get personalized farming advice based on your local weather'
-                : 'உங்கள் பிராந்திய வானிலை அடிப்படையில் தனிப்பட்ட விவசாய ஆலோசனைகளைப் பெறுங்கள்'}
+              {t('personalizedWeatherAdvice')}
             </div>
           </div>
 

@@ -37,5 +37,3 @@ export const tamilNaduDistricts = [
   { name: 'Chengalpattu', lat: 12.6810, lon: 79.9768, type: 'Coastal' },
   { name: 'Mayiladuthurai', lat: 11.1035, lon: 79.6550, type: 'Delta' }
 ];
-
-export const defaultDistrict = tamilNaduDistricts[0]; // Chennai

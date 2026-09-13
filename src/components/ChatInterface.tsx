@@ -294,6 +294,8 @@ export const ChatInterface = ({
           <div className="flex items-center gap-2 overflow-hidden">
             <button
               onClick={onOpenSidebar}
+              aria-label={t('openSidebar')}
+              title={t('openSidebar')}
               className="lg:hidden p-2 hover:bg-green-700 rounded-lg"
             >
               ☰
@@ -316,6 +318,8 @@ export const ChatInterface = ({
           <div className="flex items-center gap-1">
             <button
               onClick={() => setShowLangMenu(!showLangMenu)}
+              aria-label={t('changeLanguage')}
+              title={t('changeLanguage')}
               className="p-2 hover:bg-green-700 rounded-lg"
             >
               <Languages className="w-5 h-5" />
@@ -323,6 +327,8 @@ export const ChatInterface = ({
 
             <button
               onClick={logout}
+              aria-label={t('logout')}
+              title={t('logout')}
               className="p-2 hover:bg-green-700 rounded-lg"
             >
               <LogOut className="w-5 h-5" />
@@ -459,6 +465,7 @@ export const ChatInterface = ({
               <button
                 onClick={handleSend}
                 disabled={isProcessing || (!input.trim() && !selectedImage)}
+                aria-label={t('send')}
                 className="p-3 bg-green-600 text-white rounded-xl disabled:bg-gray-400"
               >
                 <Send className="w-5 h-5" />

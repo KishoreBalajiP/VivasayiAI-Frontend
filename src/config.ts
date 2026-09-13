@@ -1,7 +1,10 @@
 export const config = {
-  // Backend API base URL. Backend runs on :8000 (see .env) — the fallback is only for
-  // builds where VITE_API_URL was not provided. All API calls go through src/api/client.ts.
-  apiUrl: import.meta.env.VITE_API_URL || 'http://localhost:8000',
+  // Backend API base URL. REQUIRED via VITE_API_URL (see .env.example). There is NO
+  // localhost fallback: production must never silently target a development host. When the
+  // variable is unset, requests resolve against the same origin (relative paths) and surface
+  // through the app's normal error/retry states instead of reaching a hardcoded dev host.
+  // All API calls go through src/api/client.ts.
+  apiUrl: import.meta.env.VITE_API_URL || '',
   cognito: {
     domain: import.meta.env.VITE_COGNITO_DOMAIN || '',
     clientId: import.meta.env.VITE_COGNITO_CLIENT_ID || '',

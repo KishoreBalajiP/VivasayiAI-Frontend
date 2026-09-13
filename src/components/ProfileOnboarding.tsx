@@ -195,7 +195,7 @@ export const ProfileOnboarding = ({ onComplete }: Props) => {
                   <button
                     type="button"
                     onClick={() => setCrops(prev => prev.filter(c => c !== crop))}
-                    aria-label={`Remove ${crop}`}
+                    aria-label={t('removeCrop', { crop })}
                     className="text-green-700 hover:text-red-600"
                   >
                     <X className="w-3 h-3" />
@@ -226,7 +226,7 @@ export const ProfileOnboarding = ({ onComplete }: Props) => {
               setAcresInput(e.target.value);
               setErrors(prev => ({ ...prev, acres: undefined }));
             }}
-            placeholder="e.g. 2.5"
+            placeholder={t('acresPlaceholder')}
             className="w-full p-3 border rounded-xl"
           />
           {errors.acres && (
