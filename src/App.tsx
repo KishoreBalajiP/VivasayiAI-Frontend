@@ -57,7 +57,11 @@ function App() {
           <ChatInterface
             activeChatId={activeChatId}
             setActiveChatId={setActiveChatId}
-            onMessageSent={() => setRefreshChats(prev => !prev)}
+            onMessageSent={(createdNew) => {
+              // Refresh the list only when a brand-new session was created (its title is
+              // auto-derived server-side). Sends inside existing sessions don't refetch.
+              if (createdNew) setRefreshChats(prev => !prev);
+            }}
             onOpenSidebar={() => setIsSidebarOpen(true)} // ✅ HAMBURGER WORKS
           />
         </div>

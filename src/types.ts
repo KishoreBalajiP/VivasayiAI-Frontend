@@ -23,14 +23,27 @@ export interface Message {
 }
 
 
-// Frontend-only mirror kept for reference; the backend drives ownership from the token's
-// cognitoSub and never expects/returns userEmail.
-export interface ChatSession {
+// Backend message shape (models/ChatSession messageSchema). Messages have NO Mongo _id.
+// `text` is absent only for image-only turns (E3); `imageId` is the server-side link to
+// the stored ImageRecord (keys ImageRecord, not a client URL).
+export interface SessionMessage {
+  sender: 'user' | 'ai' | 'system';
+  text?: string;
+  imageId?: string;
+  timestamp: string;
+}
+
+// Backend ChatSession document as returned by GET /list, GET /:id, POST /new,
+// POST /:id/message. Ownership derives from the token's cognitoSub server-side;
+// `userEmail` is a server-set display/legacy field and is never sent by the client.
+export interface ChatSessionRecord {
   _id: string;
   title: string;
-  messages: Message[];
+  messages: SessionMessage[];
   createdAt: string;
   updatedAt: string;
+  cognitoSub?: string;
+  userEmail?: string | null;
 }
 
 export type Language = 'en' | 'ta';

@@ -1,19 +1,33 @@
 import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
-import { Message, ImageAttachment } from '../types';
+import { Message, ImageAttachment, SessionMessage } from '../types';
 import { Send, Image as ImageIcon, LogOut, Languages, Loader2 } from 'lucide-react';
 import { MessageBubble } from './MessageBubble';
-import { sendChatMessage } from '../api';
-import { request } from '../api/client';
+import { sendChatMessage, getChatSession } from '../api';
+import { ApiClientError } from '../api/client';
 import VoiceRecorder from './VoiceRecorder';
 
 interface Props {
   activeChatId: string | null;
   setActiveChatId: (id: string | null) => void;
-  onMessageSent?: () => void;
+  // Reports each send; `true` means a brand-new session was created by this message
+  // (the sidebar should refresh its list only then).
+  onMessageSent?: (createdNew: boolean) => void;
   onOpenSidebar?: () => void;
 }
+
+// Backend messages carry no id and use ISO timestamps; the UI model needs a stable React
+// key. The index-based id is a rendering key only — no backend message fields are fabricated.
+const toViewMessages = (msgs: SessionMessage[]): Message[] =>
+  msgs.map((m, i) => ({
+    id: `srv-${i}`,
+    sender: m.sender === 'user' ? 'user' : 'ai',
+    timestamp: new Date(m.timestamp),
+    text: m.text,
+    // imageId (E3 image-turn link) is preserved in the SessionMessage type layer; the UI
+    // renders these as timestamp-only turns until image UI ships in a later phase.
+  }));
 
 export const ChatInterface = ({
   activeChatId,
@@ -28,6 +42,8 @@ export const ChatInterface = ({
   const [input, setInput] = useState('');
   const [selectedImage, setSelectedImage] = useState<ImageAttachment | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [showLangMenu, setShowLangMenu] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -41,13 +57,36 @@ export const ChatInterface = ({
   useEffect(() => setInput(''), [activeChatId]);
 
   useEffect(() => {
-    if (!activeChatId) return;
-    // Routed through the authenticated client so the Backend access token is attached.
-    request<{ session: { messages: Message[] } }>(
-      `/chatsessions/${activeChatId}`
-    )
-      .then(data => setMessages(data.data?.session?.messages || []))
-      .catch(() => {});
+    setHistoryError(null);
+    if (!activeChatId) {
+      setMessages([]);
+      setIsLoadingHistory(false);
+      return;
+    }
+
+    setIsLoadingHistory(true);
+    (async () => {
+      try {
+        // Routed through the authenticated client so the Backend access token is attached.
+        const session = await getChatSession(activeChatId);
+        setMessages(toViewMessages(session.messages));
+      } catch (err) {
+        if (err instanceof ApiClientError && (err.status === 401 || err.status === 429)) {
+          return; // 401 → auth layer routes to login; 429 silent here is acceptable as the
+          // request is retried on next session switch, and the rate-limit toasts apply to
+          // user-initiated actions.
+        }
+        if (err instanceof ApiClientError && err.status === 404) {
+          // Session unavailable (deleted/unowned): safe empty state, no raw details.
+          setMessages([]);
+          return;
+        }
+        // Network/server failure: user-visible, existing friendly error.
+        setHistoryError('serverError');
+      } finally {
+        setIsLoadingHistory(false);
+      }
+    })();
   }, [activeChatId]);
 
   const handleSend = async () => {
@@ -74,21 +113,22 @@ export const ChatInterface = ({
         activeChatId
       );
 
-      if (!activeChatId && res.data?.chatId) {
-        setActiveChatId(res.data.chatId);
+      const createdNew = !activeChatId && Boolean(res.chatId);
+      if (createdNew) {
+        setActiveChatId(res.chatId);
       }
 
       setMessages(prev => [
         ...prev,
         {
           id: `ai-${Date.now()}`,
-          text: res.data?.response || 'No response received.',
+          text: res.response || 'No response received.',
           sender: 'ai',
           timestamp: new Date(),
         },
       ]);
 
-      onMessageSent?.();
+      onMessageSent?.(createdNew);
     } catch {
       setMessages(prev => [
         ...prev,
@@ -175,6 +215,24 @@ export const ChatInterface = ({
           {messages.map((m, i) => (
             <MessageBubble key={`${m.id}-${i}`} message={m} />
           ))}
+
+          {isLoadingHistory && (
+            <div className="flex items-center gap-2 text-gray-600">
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span>{t('processing')}</span>
+            </div>
+          )}
+
+          {historyError && (
+            <MessageBubble
+              message={{
+                id: 'history-error',
+                sender: 'ai',
+                timestamp: new Date(),
+                text: t(historyError),
+              }}
+            />
+          )}
 
           {isProcessing && (
             <div className="flex items-center gap-2 text-gray-600">

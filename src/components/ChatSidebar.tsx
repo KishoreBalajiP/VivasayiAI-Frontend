@@ -2,13 +2,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { Trash2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { config } from '../config';
-
-interface Chat {
-  _id: string;
-  title?: string;
-  createdAt: string;
-}
+import {
+  listChatSessions,
+  createChatSession,
+  deleteChatSession,
+  clearAllChatSessions,
+} from '../api';
+import { ApiClientError } from '../api/client';
+import type { ChatSessionRecord } from '../types';
 
 interface Props {
   activeChatId: string | null;
@@ -25,14 +26,43 @@ export default function ChatSidebar({
   isOpen,
   setIsOpen,
 }: Props) {
-  const [chats, setChats] = useState<Chat[]>([]);
+  const [chats, setChats] = useState<ChatSessionRecord[]>([]);
+  const [isCreating, setIsCreating] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [isClearing, setIsClearing] = useState(false);
   const { t } = useTranslation();
 
+  // Friendly, translated toast for session-operation failures. 401 is intentionally ignored
+  // here — the Phase 1 auth layer flips the app back to the login screen. Raw backend
+  // messages are never shown.
+  const toastSessionError = (err: unknown, fallbackKey: string) => {
+    if (err instanceof ApiClientError) {
+      if (err.status === 401) return;
+      if (err.status === 429) {
+        toast.error(t('rateLimited'), { duration: 4000 });
+        return;
+      }
+      if (err.status === 404) {
+        toast.error(t('notFound'), { duration: 4000 });
+        return;
+      }
+      if (err.status === 0) {
+        toast.error(t('networkError'), { duration: 4000 });
+        return;
+      }
+    }
+    toast.error(t(fallbackKey), { duration: 4000 });
+  };
+
   const fetchChats = useCallback(async () => {
-    // Ownership derives from the authenticated token — the identity is never in the URL/body.
-    const res = await fetch(`${config.apiUrl}/chatsessions/list`);
-    const data = await res.json();
-    setChats(data.data?.sessions || []);
+    try {
+      // Ownership derives from the authenticated token — no identity in URL/body/query.
+      const sessions = await listChatSessions();
+      setChats(sessions);
+    } catch (err) {
+      toastSessionError(err, 'chatCreateFailed');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -40,63 +70,61 @@ export default function ChatSidebar({
   }, [fetchChats, refreshChats]);
 
   const handleNewChat = async () => {
+    if (isCreating) return;
+    setIsCreating(true);
+
     try {
-      const res = await fetch(`${config.apiUrl}/chatsessions/new`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-
-      const data = await res.json();
-      const newSession = data.data?.session;
-
-      if (newSession?._id) {
-        setActiveChatId(newSession._id);
-        fetchChats();
-        setIsOpen(false);
-        toast.success(t('chatCreated'), { duration: 3000 });
-      } else {
-        toast.error(t('chatCreateFailed'), { duration: 4000 });
-      }
-    } catch {
-      toast.error(t('chatCreateFailed'), { duration: 4000 });
+      const session = await createChatSession();
+      setActiveChatId(session._id);
+      await fetchChats();
+      setIsOpen(false);
+      toast.success(t('chatCreated'), { duration: 3000 });
+    } catch (err) {
+      toastSessionError(err, 'chatCreateFailed');
+    } finally {
+      setIsCreating(false);
     }
   };
 
   const handleDeleteChat = async (chatId: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    if (deletingId) return;
+    setDeletingId(chatId);
 
     try {
-      const res = await fetch(`${config.apiUrl}/chatsessions/${chatId}`, {
-        method: 'DELETE',
-      });
-
-      if (res.ok) {
+      await deleteChatSession(chatId);
+      setChats(prev => prev.filter(c => c._id !== chatId));
+      if (activeChatId === chatId) setActiveChatId(null);
+      toast.success(t('chatDeleted'), { duration: 3000 });
+    } catch (err) {
+      if (err instanceof ApiClientError && err.status === 401) return;
+      if (err instanceof ApiClientError && err.status === 404) {
+        // Already gone — return the UI to a safe state without error noise.
         setChats(prev => prev.filter(c => c._id !== chatId));
         if (activeChatId === chatId) setActiveChatId(null);
-        toast.success(t('chatDeleted'), { duration: 3000 });
+        return;
       }
-    } catch {
-      toast.error(t('deleteFailed'), { duration: 4000 });
+      toastSessionError(err, 'deleteFailed');
+    } finally {
+      setDeletingId(null);
     }
   };
 
   const handleClearAllChats = async () => {
     if (chats.length === 0) return;
+    if (isClearing) return;
+    setIsClearing(true);
 
     try {
-      const res = await fetch(`${config.apiUrl}/chatsessions/clear/all`, {
-        method: 'DELETE',
-      });
-
-      if (res.ok) {
-        setChats([]);
-        setActiveChatId(null);
-        setIsOpen(false);
-        toast.success(t('allDeleted'), { duration: 3000 });
-      }
-    } catch {
-      toast.error(t('deleteFailed'), { duration: 4000 });
+      await clearAllChatSessions();
+      setChats([]);
+      setActiveChatId(null);
+      setIsOpen(false);
+      toast.success(t('allDeleted'), { duration: 3000 });
+    } catch (err) {
+      toastSessionError(err, 'deleteFailed');
+    } finally {
+      setIsClearing(false);
     }
   };
 
@@ -132,7 +160,10 @@ export default function ChatSidebar({
 
         <button
           onClick={handleNewChat}
-          className="bg-green-600 text-white py-2 rounded-lg font-medium mb-3 hover:bg-green-700"
+          disabled={isCreating}
+          className="bg-green-600 text-white py-2 rounded-lg font-medium mb-3
+            hover:bg-green-700 disabled:opacity-70 disabled:cursor-not-allowed
+            disabled:hover:bg-green-600"
         >
           + {t('newChat')}
         </button>
@@ -161,8 +192,10 @@ export default function ChatSidebar({
 
               <button
                 onClick={e => handleDeleteChat(chat._id, e)}
+                disabled={deletingId !== null}
                 className="absolute right-2 top-1/2 -translate-y-1/2
-                  opacity-0 group-hover:opacity-100 text-red-500"
+                  opacity-0 group-hover:opacity-100 text-red-500
+                  disabled:opacity-0 disabled:cursor-not-allowed"
               >
                 <Trash2 className="w-4 h-4" />
               </button>
@@ -172,13 +205,13 @@ export default function ChatSidebar({
 
         <button
           onClick={handleClearAllChats}
-          disabled={chats.length === 0}
+          disabled={chats.length === 0 || isClearing}
           className={`py-2 rounded-lg font-medium
             ${
               chats.length === 0
                 ? 'bg-gray-400 text-gray-200'
                 : 'bg-red-600 text-white hover:bg-red-700'
-            }`}
+            } disabled:cursor-not-allowed`}
         >
           🗑️ {t('clearAllChats')}
         </button>
