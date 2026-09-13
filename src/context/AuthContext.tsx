@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useRef, ReactNode, useCallback } from 'react';
 import { BackendAuthResponse, BackendUser, Language } from '../types';
 import { config } from '../config';
 import {
@@ -97,6 +97,10 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
+  // Guards the OAuth callback against the dev-mode StrictMode double effect (and any future
+  // remount): the second run must not treat the in-flight callback as "handled, then failed".
+  const oauthHandledRef = useRef(false);
+
   const clearSession = useCallback(() => {
     setAccessToken(null);
     removeStored(USER_KEY);
@@ -116,6 +120,9 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
     try {
       if (!code || !expectedState || !state || state !== expectedState) {
+        removeStored(USER_KEY);
+        setAccessToken(null);
+        setUser(null);
         setAuthError('authInvalidCallback');
         return;
       }
@@ -129,6 +136,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
       const result = envelope.data;
       if (!result?.accessToken || !result?.user?.email) {
+        removeStored(USER_KEY);
         setAccessToken(null);
         setAuthError('loginFailed');
         return;
@@ -138,6 +146,10 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       writeStored(USER_KEY, JSON.stringify(result.user));
       setUser(result.user);
     } catch {
+      // Full reset: the token and any stored user from a previous session must not survive
+      // a failed exchange, otherwise the app would look logged-in against a dead token.
+      removeStored(USER_KEY);
+      clearAuthState();
       setAccessToken(null);
       setUser(null);
       setAuthError('loginFailed');
@@ -153,9 +165,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     // Any API-layer 401 clears the invalid session and routes back to login (no refresh
     // endpoint exists yet, so no auto-recovery loop is attempted).
     registerUnauthorizedHandler(() => {
-      setAccessToken(null);
-      removeStored(USER_KEY);
-      setUser(null);
+      clearSession();
       setAuthError('authExpired');
     });
 
@@ -187,6 +197,10 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     const code = params.get('code');
 
     if (code) {
+      // Dev StrictMode double-mounts this effect; without the guard the second run would
+      // clear the SPA's oauth state and race the in-flight callback with an empty `state`.
+      if (oauthHandledRef.current) return;
+      oauthHandledRef.current = true;
       void handleOAuthCallback(code, params.get('state'));
       return;
     }

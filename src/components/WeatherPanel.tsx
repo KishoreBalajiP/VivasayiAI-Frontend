@@ -18,6 +18,7 @@ export const WeatherPanel = ({ district }: WeatherPanelProps) => {
   const [weather, setWeather] = useState<WeatherResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorKey, setErrorKey] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
   const requestId = useRef(0);
 
   useEffect(() => {
@@ -29,6 +30,9 @@ export const WeatherPanel = ({ district }: WeatherPanelProps) => {
     }
 
     const id = ++requestId.current;
+    // Drop any previous district's data immediately, so a Kumbakonam forecast can never
+    // render under a new district label during the fetch.
+    setWeather(null);
     setLoading(true);
     setErrorKey(null);
 
@@ -44,7 +48,7 @@ export const WeatherPanel = ({ district }: WeatherPanelProps) => {
       .finally(() => {
         if (requestId.current === id) setLoading(false);
       });
-  }, [district]);
+  }, [district, retryKey]);
 
   if (!district) return null;
 
@@ -73,12 +77,20 @@ export const WeatherPanel = ({ district }: WeatherPanelProps) => {
             {t('weatherLoading')}
           </div>
         ) : errorKey ? (
-          <p
-            role="alert"
-            className="inline-block text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2"
-          >
-            {t(errorKey)}
-          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <p
+              role="alert"
+              className="inline-block text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2"
+            >
+              {t(errorKey)}
+            </p>
+            <button
+              onClick={() => setRetryKey((k) => k + 1)}
+              className="text-sm font-semibold text-green-700 border border-green-300 rounded-lg px-3 py-2 bg-white hover:bg-green-50"
+            >
+              {t('retry')}
+            </button>
+          </div>
         ) : weather && hasCurrent ? (
           <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
             <div className="flex items-center gap-4">
@@ -124,7 +136,15 @@ export const WeatherPanel = ({ district }: WeatherPanelProps) => {
             )}
           </div>
         ) : weather ? (
-          <p className="text-sm sm:text-base text-gray-500">{t('weatherUnavailable')}</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="text-sm sm:text-base text-gray-500">{t('weatherUnavailable')}</p>
+            <button
+              onClick={() => setRetryKey((k) => k + 1)}
+              className="text-sm font-semibold text-green-700 border border-green-300 rounded-lg px-3 py-2 bg-white hover:bg-green-50"
+            >
+              {t('retry')}
+            </button>
+          </div>
         ) : null}
       </div>
     </div>

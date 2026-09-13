@@ -4,7 +4,7 @@ import { ChatInterface } from './components/ChatInterface';
 import { ProfileOnboarding } from './components/ProfileOnboarding';
 import ChatSidebar from './components/ChatSidebar';
 import { Loader2 } from 'lucide-react';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Toaster } from 'sonner';
 import { getProfile } from './api';
@@ -29,6 +29,10 @@ function App() {
   // The loaded profile is the source for the weather district (WeatherPanel).
   const [profileStatus, setProfileStatus] = useState<ProfileStatus>('loading');
   const [profile, setProfile] = useState<FarmProfile | null>(null);
+
+  // Which logged-in user's profile has already been requested. Prevents the profile fetch
+  // from being repeated during same-user remounts (incl. dev StrictMode double-effects).
+  const profileLoadedForRef = useRef<string | null>(null);
 
   // Sync i18n with auth language
   useEffect(() => {
@@ -62,9 +66,13 @@ function App() {
 
   useEffect(() => {
     if (user) {
+      const profileKey = user.email ?? user._id ?? 'anonymous';
+      if (profileLoadedForRef.current === profileKey) return; // already fetched for this user
+      profileLoadedForRef.current = profileKey;
       void loadProfile();
     } else {
       // Signed out — reset profile gate so the next login refetches exactly once.
+      profileLoadedForRef.current = null;
       setProfileStatus('loading');
       setProfile(null);
     }
@@ -95,7 +103,16 @@ function App() {
   }
 
   if (profileStatus === 'missing') {
-    return <ProfileOnboarding onComplete={() => setProfileStatus('loaded')} />;
+    return (
+      <ProfileOnboarding
+        onComplete={(savedProfile) => {
+          // Adopt the freshly saved profile so the weather bar/chat gate resolve immediately
+          // instead of waiting for the follow-up GET round-trip.
+          setProfile(savedProfile);
+          setProfileStatus('loaded');
+        }}
+      />
+    );
   }
 
   if (profileStatus === 'error') {

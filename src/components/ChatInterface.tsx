@@ -61,11 +61,29 @@ export const ChatInterface = ({
   const submittingRef = useRef(false);
   // Mirrors the latest composer image so the unmount cleanup releases its object URL.
   const selectedImageRef = useRef<ImageAttachment | null>(null);
+  // Monotonic id per history load: only the newest request may write message state, so a
+  // slow old session fetch can never overwrite the session the user just switched to.
+  const historyRequestId = useRef(0);
+  // Latest active session, readable inside async send/flows after re-renders.
+  const activeChatIdRef = useRef(activeChatId);
+  const mountedRef = useRef(true);
 
   // ✅ AUTO SCROLL ONLY MESSAGE AREA
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    activeChatIdRef.current = activeChatId;
+  }, [activeChatId]);
+
+  // Cleanup on unmount so async tasks of a departed component never write React state.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // Keep the cleanup ref in sync with the latest composer image.
   useEffect(() => {
@@ -86,6 +104,7 @@ export const ChatInterface = ({
   useEffect(() => setInput(''), [activeChatId]);
 
   useEffect(() => {
+    const id = ++historyRequestId.current;
     setHistoryError(null);
     if (!activeChatId) {
       setMessages([]);
@@ -93,13 +112,20 @@ export const ChatInterface = ({
       return;
     }
 
+    // Switching sessions resets the body immediately: the previous session's bubbles must
+    // never linger under the new session label. A failed load leaves the error state visible
+    // (see the catch below) rather than silently showing an empty body.
+    setMessages([]);
     setIsLoadingHistory(true);
+
     (async () => {
       try {
         // Routed through the authenticated client so the Backend access token is attached.
         const session = await getChatSession(activeChatId);
+        if (historyRequestId.current !== id) return; // user switched sessions meanwhile
         setMessages(toViewMessages(session.messages));
       } catch (err) {
+        if (historyRequestId.current !== id) return; // stale failure for a superseded request
         if (err instanceof ApiClientError && (err.status === 401 || err.status === 429)) {
           return; // 401 → auth layer routes to login; 429 silent here is acceptable as the
           // request is retried on next session switch, and the rate-limit toasts apply to
@@ -113,7 +139,7 @@ export const ChatInterface = ({
         // Network/server failure: user-visible, existing friendly error.
         setHistoryError('serverError');
       } finally {
-        setIsLoadingHistory(false);
+        if (historyRequestId.current === id) setIsLoadingHistory(false);
       }
     })();
   }, [activeChatId]);
@@ -148,6 +174,9 @@ export const ChatInterface = ({
     if (!text && !selectedImage) return;
 
     const hasImage = Boolean(selectedImage);
+    // The session this turn is being sent to — the user may switch away while the request is
+    // in flight, and appended bubbles must never land in a session they were not for.
+    const sessionIdAtSend = activeChatId;
 
     const userMessage: Message = {
       id: `user-${Date.now()}`,
@@ -180,14 +209,19 @@ export const ChatInterface = ({
       }
 
       // Owned by the authenticated token — no userEmail/cognitoSub/userId is sent.
-      const res = await sendChatMessage(text, language, activeChatId, uploadId);
+      const res = await sendChatMessage(text, language, sessionIdAtSend, uploadId);
+
+      // The turn was accepted/completed. If the component unmounted or the user switched
+      // sessions mid-flight, abandon ALL UI updates for this turn (the backend already
+      // persisted it to the original session — history reloads it correctly).
+      if (!mountedRef.current || sessionIdAtSend !== activeChatIdRef.current) return;
 
       // Success: the turn was accepted/completed — release composer state now.
       setInput('');
       setSelectedImage(null);
       setSendStage('idle');
 
-      const createdNew = !activeChatId && Boolean(res.chatId);
+      const createdNew = !sessionIdAtSend && Boolean(res.chatId);
       if (createdNew) {
         setActiveChatId(res.chatId);
       }
@@ -207,6 +241,10 @@ export const ChatInterface = ({
 
       onMessageSent?.(createdNew);
     } catch (error) {
+      // A failure belongs to the session it was sent in: if the component is gone or the
+      // user switched sessions, abandon the composer error instead of surfacing it in the
+      // new context. (finally below still releases the busy flags.)
+      if (!mountedRef.current || sessionIdAtSend !== activeChatIdRef.current) return;
       if (hasImage) {
         // Keep the image + text in the composer so the user can retry. Friendly keys only —
         // raw server errors, S3/Gemini details and stack traces are never shown.
@@ -310,6 +348,13 @@ export const ChatInterface = ({
           {messages.map((m, i) => (
             <MessageBubble key={`${m.id}-${i}`} message={m} />
           ))}
+
+          {messages.length === 0 && !isLoadingHistory && !isProcessing && !historyError && (
+            <div className="text-center pt-16 sm:pt-24 px-4">
+              <div className="text-5xl mb-4">🌾</div>
+              <p className="text-gray-600 text-base sm:text-lg">{t('chatEmptyState')}</p>
+            </div>
+          )}
 
           {isLoadingHistory && (
             <div className="flex items-center gap-2 text-gray-600">
