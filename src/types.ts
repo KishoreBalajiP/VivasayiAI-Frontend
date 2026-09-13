@@ -48,30 +48,39 @@ export interface ChatSessionRecord {
 
 export type Language = 'en' | 'ta';
 
-// WEATHER TYPES - Farmer Friendly
-export interface WeatherData {
+// WEATHER TYPES — mirror of the backend GET /weather?district=<name> response
+// (services/weather.service.js buildResponse/unknown path). Only fields the backend
+// actually returns are typed — no humidity/soilMoisture/farmingAdvice/icon are invented.
+
+export interface WeatherCurrent {
   temperature: number;
-  feelsLike: number;
-  description: string; // Simple farmer terms
-  location: string;
-  humidity: number;
-  windSpeed: number;
-  rainfall: number;
-  soilMoisture: string; // Dry/Normal/Wet
-  farmingAdvice: string[];
-  icon: string;
-  forecast?: DailyForecast[];
+  windspeed: number;
+  weatherCode: number;
+  isDay: number;
+  summary: string;
 }
 
-export interface DailyForecast {
+export interface WeatherForecastDay {
   date: string;
-  day: string;
-  maxTemp: number;
-  minTemp: number;
-  description: string;
-  rainfall: number;
-  farmingTip: string;
-  icon: string;
+  temperatureMax: number;
+  temperatureMin: number;
+  weatherCode: number;
+  precipitation: number;
+  summary: string;
+}
+
+// Normal success shape (cache hit or fresh). current/forecast can be null/[] when the
+// district is unbeknownst to the provider (status: "unknown").
+export interface WeatherResponse {
+  district: string;
+  current: WeatherCurrent | null;
+  forecast: WeatherForecastDay[];
+  source: string;
+  cached: boolean;
+  ageSeconds: number;
+  freshness?: 'fresh' | 'stale';
+  status?: 'unknown';
+  note?: string;
 }
 
 // Standard backend response envelope: every endpoint (success or error) returns

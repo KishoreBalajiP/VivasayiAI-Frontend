@@ -1,5 +1,11 @@
 import { request } from './api/client';
-import type { ChatSessionRecord, FarmProfile, FarmProfileInput, SessionMessage } from './types';
+import type {
+  ChatSessionRecord,
+  FarmProfile,
+  FarmProfileInput,
+  SessionMessage,
+  WeatherResponse,
+} from './types';
 
 // ── POST /chat ──────────────────────────────────────────────────────────────────────────
 // Returns the AI reply AND persists the full exchange into the (new or existing) session
@@ -116,4 +122,18 @@ export const createProfile = async (input: FarmProfileInput): Promise<FarmProfil
 // (the backend endpoint is exercised by a future settings/profile-management phase).
 export const deleteProfile = async (): Promise<void> => {
   await request('/profile', { method: 'DELETE' });
+};
+
+// ── /weather ──────────────────────────────────────────────────────────────────────────────
+// Live weather for the caller's farm district (E2-S1). The district comes from the loaded
+// FarmProfile — the client never geolocates or guesses. The backend is cache-first and
+// degrades to `status: "unknown"` (current: null, forecast: []) when the district is not
+// resolvable or the provider is down — the UI renders a friendly "unavailable" message.
+
+// GET /weather?district=<district-name> — current + 1-day forecast for the district.
+export const getWeather = async (district: string): Promise<WeatherResponse> => {
+  const envelope = await request<WeatherResponse>(
+    `/weather?district=${encodeURIComponent(district)}`
+  );
+  return envelope.data;
 };

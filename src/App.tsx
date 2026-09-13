@@ -9,6 +9,8 @@ import { useTranslation } from 'react-i18next';
 import { Toaster } from 'sonner';
 import { getProfile } from './api';
 import { ApiClientError } from './api/client';
+import { WeatherPanel } from './components/WeatherPanel';
+import type { FarmProfile } from './types';
 
 type ProfileStatus = 'loading' | 'loaded' | 'missing' | 'error';
 
@@ -24,7 +26,9 @@ function App() {
 
   // Farm profile gate: the authenticated user's profile decides between onboarding and the
   // chat application. It is never a manual part of chat requests — the backend loads it.
+  // The loaded profile is the source for the weather district (WeatherPanel).
   const [profileStatus, setProfileStatus] = useState<ProfileStatus>('loading');
+  const [profile, setProfile] = useState<FarmProfile | null>(null);
 
   // Sync i18n with auth language
   useEffect(() => {
@@ -37,6 +41,7 @@ function App() {
     setProfileStatus('loading');
     try {
       const fetched = await getProfile();
+      setProfile(fetched);
       // A saved profile owns the preferred language — initialize the app from it.
       if (fetched.language) {
         setLanguage(fetched.language);
@@ -61,6 +66,7 @@ function App() {
     } else {
       // Signed out — reset profile gate so the next login refetches exactly once.
       setProfileStatus('loading');
+      setProfile(null);
     }
   }, [user, loadProfile]);
 
@@ -110,29 +116,34 @@ function App() {
 
   return (
     <>
-      <div className="flex h-screen overflow-hidden">
+      <div className="h-screen flex flex-col overflow-hidden">
+        {/* AUTHENTICATED WEATHER BAR — driven solely by the loaded FarmProfile district */}
+        <WeatherPanel district={profile?.district} />
 
-        {/* SIDEBAR */}
-        <ChatSidebar
-          activeChatId={activeChatId}
-          setActiveChatId={setActiveChatId}
-          refreshChats={refreshChats}
-          isOpen={isSidebarOpen}          // ✅ CONNECTED
-          setIsOpen={setIsSidebarOpen}    // ✅ CONNECTED
-        />
+        <div className="flex flex-1 overflow-hidden">
 
-        {/* CHAT WINDOW */}
-        <div className="flex-1">
-          <ChatInterface
+          {/* SIDEBAR */}
+          <ChatSidebar
             activeChatId={activeChatId}
             setActiveChatId={setActiveChatId}
-            onMessageSent={(createdNew) => {
-              // Refresh the list only when a brand-new session was created (its title is
-              // auto-derived server-side). Sends inside existing sessions don't refetch.
-              if (createdNew) setRefreshChats(prev => !prev);
-            }}
-            onOpenSidebar={() => setIsSidebarOpen(true)} // ✅ HAMBURGER WORKS
+            refreshChats={refreshChats}
+            isOpen={isSidebarOpen}          // ✅ CONNECTED
+            setIsOpen={setIsSidebarOpen}    // ✅ CONNECTED
           />
+
+          {/* CHAT WINDOW */}
+          <div className="flex-1">
+            <ChatInterface
+              activeChatId={activeChatId}
+              setActiveChatId={setActiveChatId}
+              onMessageSent={(createdNew) => {
+                // Refresh the list only when a brand-new session was created (its title is
+                // auto-derived server-side). Sends inside existing sessions don't refetch.
+                if (createdNew) setRefreshChats(prev => !prev);
+              }}
+              onOpenSidebar={() => setIsSidebarOpen(true)} // ✅ HAMBURGER WORKS
+            />
+          </div>
         </div>
       </div>
 

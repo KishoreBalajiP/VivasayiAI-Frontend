@@ -202,6 +202,13 @@ allDeleted: 'All chats cleared successfully!',
       cloudy: 'Cloudy',
       humid: 'Humid',
       dry: 'Dry',
+
+      // Weather Panel
+      weatherToday: "Today's Weather for Farmers",
+      weatherLoading: 'Loading weather...',
+      weatherUnavailable: 'Weather unavailable',
+      wind: 'Wind',
+      rain: 'Rain',
       
       // Soil Types
       claySoil: 'Clay Soil',
@@ -411,6 +418,13 @@ micError: 'மைக்ரோஃபோன் பிழை',
       cloudy: 'மேகமூட்டம்',
       humid: 'ஈரப்பதம்',
       dry: 'வறண்ட',
+
+      // Weather Panel
+      weatherToday: 'இன்றைய விவசாய வானிலை',
+      weatherLoading: 'வானிலை ஏற்றுகிறது...',
+      weatherUnavailable: 'வானிலை தகவல் இல்லை',
+      wind: 'காற்று',
+      rain: 'மழை',
       
       // Soil Types
       claySoil: 'களிமண் மண்',
