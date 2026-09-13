@@ -1,5 +1,5 @@
 import { request } from './api/client';
-import type { ChatSessionRecord, SessionMessage } from './types';
+import type { ChatSessionRecord, FarmProfile, FarmProfileInput, SessionMessage } from './types';
 
 // ── POST /chat ──────────────────────────────────────────────────────────────────────────
 // Returns the AI reply AND persists the full exchange into the (new or existing) session
@@ -89,4 +89,31 @@ export const deleteChatSession = async (id: string): Promise<void> => {
 // DELETE /chatsessions/clear/all — removes all of the caller's sessions.
 export const clearAllChatSessions = async (): Promise<void> => {
   await request('/chatsessions/clear/all', { method: 'DELETE' });
+};
+
+// ── /profile ─────────────────────────────────────────────────────────────────────────────
+// Farm profile (E2-S4). The backend derives ownership from the Bearer token and uses the
+// profile when assembling AI context — the client never sends profile fields to /chat.
+
+// GET /profile — the caller's profile. The backend returns 404 when NO profile exists;
+// that 404 is how the app detects "onboarding required".
+export const getProfile = async (): Promise<FarmProfile> => {
+  const envelope = await request<{ profile: FarmProfile }>('/profile');
+  return envelope.data.profile;
+};
+
+// POST /profile — upsert (create; also update when it already exists). Only the four
+// supported fields are sent.
+export const createProfile = async (input: FarmProfileInput): Promise<FarmProfile> => {
+  const envelope = await request<{ profile: FarmProfile }>('/profile', {
+    method: 'POST',
+    body: input,
+  });
+  return envelope.data.profile;
+};
+
+// DELETE /profile — removes the caller's farm profile. Not surfaced in the UI this phase
+// (the backend endpoint is exercised by a future settings/profile-management phase).
+export const deleteProfile = async (): Promise<void> => {
+  await request('/profile', { method: 'DELETE' });
 };

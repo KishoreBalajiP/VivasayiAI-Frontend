@@ -100,3 +100,25 @@ export interface BackendAuthResponse {
   accessToken: string;
   refreshToken?: string;
 }
+
+// Backend farm profile document (POST / GET /profile). Server-owned identity fields
+// (cognitoSub/userEmail/_id) are typed for accuracy but are NEVER submitted by the client.
+export interface FarmProfile {
+  _id?: string;
+  cognitoSub?: string;
+  userEmail?: string | null;
+  district: string;
+  crops: string[];
+  acres: number;
+  language?: 'en' | 'ta';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+// Exactly the fields the backend accepts on POST /profile (farmProfileBody).
+export interface FarmProfileInput {
+  district: string;
+  crops: string[];
+  acres: number;
+  language: 'en' | 'ta';
+}

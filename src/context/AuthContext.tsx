@@ -26,7 +26,6 @@ interface AuthContextType {
   isLoading: boolean;
   isAuthenticating: boolean;
   authError: string | null;
-  updateUserLanguage: (lang: Language) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -256,13 +255,6 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     i18n.changeLanguage(lang);
   }, []);
 
-  const updateUserLanguage = useCallback(
-    async (lang: Language) => {
-      setLanguage(lang);
-    },
-    [setLanguage]
-  );
-
   return (
     <AuthContext.Provider
       value={{
@@ -274,7 +266,6 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         isLoading,
         isAuthenticating,
         authError,
-        updateUserLanguage,
       }}
     >
       {children}
