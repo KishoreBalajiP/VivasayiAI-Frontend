@@ -1,6 +1,7 @@
 import { Message } from '../types';
 import { Volume2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { DiagnosisCard } from './DiagnosisCard';
 
 interface MessageBubbleProps {
   message: Message;
@@ -55,6 +56,11 @@ export const MessageBubble = ({ message }: MessageBubbleProps) => {
           <p className="text-base sm:text-lg leading-relaxed whitespace-pre-wrap">
             {message.text}
           </p>
+        )}
+
+        {/* 🔹 BACKEND IMAGE DIAGNOSIS (image-turn assistant response) */}
+        {!isUser && message.diagnosis && (
+          <DiagnosisCard diagnosis={message.diagnosis} />
         )}
 
         {/* 🔹 TIMESTAMP + AUDIO */}

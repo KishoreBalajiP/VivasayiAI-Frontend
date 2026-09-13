@@ -82,6 +82,10 @@ export const friendlyMessageKey = (status: number): string => {
       return 'authExpired';
     case 404:
       return 'notFound';
+    case 413:
+      // The backend enforces its upload cap via HTTP 413 (multer LIMIT_FILE_SIZE → ApiError
+      // "Image exceeds the maximum allowed size"). Specific enough to map app-wide.
+      return 'imageTooLarge';
     case 429:
       return 'rateLimited';
     case 0:

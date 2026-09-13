@@ -20,6 +20,59 @@ export interface Message {
   audioUrl?: string;
   // For backend-loaded images later
   imageUrl?: string;
+  // Backend-returned image diagnosis block (POST /chat image path). Present only on AI
+  // messages produced from an image turn. Shape mirrors the backend response exactly.
+  diagnosis?: ImageAnalysisResult;
+}
+
+// ── IMAGE / DIAGNOSIS TYPES — mirror of the backend E3 upload + chat-image pipeline ──────
+// (services/upload.service.js receiveUpload result, models/ImageRecord.js processed/vision
+// schemas, services/chatImage.service.js response.image). Only fields the backend actually
+// returns are typed; nothing here is fabricated.
+
+// Normalized image metadata for the stored (private-S3) image.
+export interface ProcessedImageInfo {
+  mediaType: string;
+  size: number;
+  width: number;
+  height: number;
+}
+
+// POST /upload → data: synchronously-validated, stored upload metadata. `status` is the
+// ImageRecord pipeline state ("stored" at response time; analysis happens later via /chat).
+export interface UploadResult {
+  uploadId: string;
+  mediaType: string;
+  extension: string;
+  size: number;
+  status: string;
+  processed: ProcessedImageInfo;
+}
+
+// One item of the vision model's structured issue observation.
+export interface VisionIssue {
+  name: string | null;
+  type: 'pest' | 'disease' | 'deficiency' | 'environmental' | 'other';
+  confidence: 'high' | 'medium' | 'low' | 'uncertain';
+  evidence: string[];
+}
+
+// The normalized vision observation stored on ImageRecord and returned with the /chat
+// image response. `uncertain` is the authoritative non-definitive signal.
+export interface VisionResult {
+  crop: string | null;
+  symptoms: string[];
+  likelyIssues: VisionIssue[];
+  confidence: 'high' | 'medium' | 'low' | 'unclear';
+  uncertain: boolean;
+  summary: string | null;
+}
+
+// POST /chat image path → the `image` block of the response.
+export interface ImageAnalysisResult {
+  status: string;
+  processed: ProcessedImageInfo;
+  vision: VisionResult;
 }
 
 

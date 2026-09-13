@@ -3,13 +3,17 @@ import type {
   ChatSessionRecord,
   FarmProfile,
   FarmProfileInput,
+  ImageAnalysisResult,
   SessionMessage,
+  UploadResult,
   WeatherResponse,
 } from './types';
 
 // ── POST /chat ──────────────────────────────────────────────────────────────────────────
 // Returns the AI reply AND persists the full exchange into the (new or existing) session
 // server-side. The backend owns both the session and the AI turn — identity is NEVER sent.
+// With `uploadId`, the backend runs the E3 image-diagnosis pipeline (S3 → vision → RAG →
+// reasoning) instead of text chat, and the response carries an `image` block.
 
 export interface ChatResult {
   chatId: string;
@@ -21,26 +25,46 @@ export interface ChatResult {
   chatHistoryCount?: number;
   timestamp?: string;
   session?: ChatSessionRecord;
+  // E3 image-turn fields — present only when the request carried an uploadId.
+  uploadId?: string;
+  image?: ImageAnalysisResult;
 }
 
 interface ChatMessageInput {
   message: string;
   language: 'en' | 'ta';
   chatId?: string;
+  uploadId?: string;
 }
 
 export const sendChatMessage = async (
   message: string,
   language: string,
-  chatId?: string | null
+  chatId?: string | null,
+  uploadId?: string
 ): Promise<ChatResult> => {
   const payload: ChatMessageInput = {
     message,
     language: language === 'ta' ? 'ta' : 'en',
   };
   if (chatId) payload.chatId = chatId;
+  if (uploadId) payload.uploadId = uploadId;
 
   const envelope = await request<ChatResult>('/chat', { method: 'POST', body: payload });
+  return envelope.data;
+};
+
+// ── POST /upload ─────────────────────────────────────────────────────────────────────────
+// Multipart image upload (E3). The centralized client attaches the Bearer token and sends
+// FormData as-is so the browser sets the multipart boundary — Content-Type is NEVER set
+// manually. `image` is the exact multipart field the backend expects (multer.single).
+// The backend validates size (≤5 MB), magic bytes and MIME, normalizes and stores the
+// image, and returns a metadata-only response (no S3 keys/URLs are ever returned).
+
+export const uploadImage = async (file: File): Promise<UploadResult> => {
+  const form = new FormData();
+  form.append('image', file);
+  const envelope = await request<UploadResult>('/upload', { method: 'POST', body: form });
   return envelope.data;
 };
 
