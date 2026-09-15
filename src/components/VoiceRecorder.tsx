@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import { Mic, Square } from "lucide-react";
 import useSpeechToText from "react-hook-speech-to-text";
 
 interface VoiceRecorderProps {
@@ -54,21 +55,31 @@ export default function VoiceRecorder({ onResult }: VoiceRecorderProps) {
   };
 
   return (
-    <div className="flex items-center justify-center sm:justify-start gap-2">
+    <div className="flex items-center justify-center sm:justify-start">
       <button
         onClick={handleToggleRecording}
         type="button"
-        className={`p-4 sm:p-5 md:p-6 rounded-xl sm:rounded-2xl transition-all shadow-lg text-sm sm:text-base ${
+        aria-label={isRecording ? t('stop') : t('speak')}
+        title={isRecording ? t('stop') : t('speak')}
+        className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors ${
           isRecording
-            ? 'bg-red-600 animate-pulse text-white'
-            : 'bg-green-600 text-white hover:bg-green-700'
+            ? 'bg-red-600 text-white'
+            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
         }`}
       >
-        {isRecording ? ` ${t('stop')}` : ` ${t('speak')}`}
+        {isRecording ? (
+          <>
+            <Square className="h-4 w-4" />
+            <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 animate-ping rounded-full bg-red-500" />
+            <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-red-600" />
+          </>
+        ) : (
+          <Mic className="h-5 w-5" />
+        )}
       </button>
 
       {error && (
-        <p className="text-red-500 text-xs sm:text-sm">
+        <p className="ml-2 text-xs text-red-500">
           {t('micError')}: {error}
         </p>
       )}

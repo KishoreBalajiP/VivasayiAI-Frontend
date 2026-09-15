@@ -2,27 +2,43 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ApiClientError, friendlyMessageKey } from '../api/client';
 import { getWeather } from '../api';
-import type { WeatherResponse } from '../types';
+import type { FarmProfile, WeatherResponse } from '../types';
+import { useLocation } from '../context/LocationContext';
+import { MapPin, AlertTriangle, Loader2, Leaf, CloudSun } from 'lucide-react';
 
 interface WeatherPanelProps {
-  district: string | undefined;
+  profile: FarmProfile | null;
 }
 
-// Authenticated weather bar rendered above the chat area. The district always comes from
-// the loaded FarmProfile — never from geolocation. The backend is cache-first and degrades
-// to `status: "unknown"` (current: null, forecast: []) when the district is not resolvable
-// or the provider is unavailable; that renders as a friendly "unavailable" message rather
-// than a hard error.
-export const WeatherPanel = ({ district }: WeatherPanelProps) => {
+// Location-first weather dashboard. The weather district comes from the DETECTED device
+// location (session-level), NOT from the farm profile. A farm-profile district is used only
+// when the user explicitly opts in after location is denied/unavailable/unsupported or the
+// device is outside Tamil Nadu — never silently.
+export const WeatherPanel = ({ profile }: WeatherPanelProps) => {
   const { t, i18n } = useTranslation();
+  const {
+    status: locStatus,
+    district: detectedDistrict,
+    requestLocation,
+  } = useLocation();
+
   const [weather, setWeather] = useState<WeatherResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorKey, setErrorKey] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
+  const [useFarmDistrict, setUseFarmDistrict] = useState(false);
   const requestId = useRef(0);
 
+  // The district actually queried + who it came from (for honest labelling).
+  const queryDistrict =
+    locStatus === 'granted' && detectedDistrict
+      ? detectedDistrict
+      : useFarmDistrict && profile?.district
+        ? profile.district
+        : null;
+
   useEffect(() => {
-    if (!district) {
+    if (!queryDistrict) {
       setWeather(null);
       setErrorKey(null);
       setLoading(false);
@@ -30,13 +46,12 @@ export const WeatherPanel = ({ district }: WeatherPanelProps) => {
     }
 
     const id = ++requestId.current;
-    // Drop any previous district's data immediately, so a Kumbakonam forecast can never
-    // render under a new district label during the fetch.
+    // Drop previous data immediately so a stale forecast never renders under a new district.
     setWeather(null);
     setLoading(true);
     setErrorKey(null);
 
-    getWeather(district)
+    getWeather(queryDistrict)
       .then((data) => {
         if (requestId.current === id) setWeather(data);
       })
@@ -48,104 +63,226 @@ export const WeatherPanel = ({ district }: WeatherPanelProps) => {
       .finally(() => {
         if (requestId.current === id) setLoading(false);
       });
-  }, [district, retryKey]);
-
-  if (!district) return null;
+  }, [queryDistrict, retryKey]);
 
   const formatDate = (date: string) =>
-    new Date(`${date}T00:00:00`).toLocaleDateString(i18n.language === 'ta' ? 'ta-IN' : 'en-IN', {
-      weekday: 'short',
-      day: 'numeric',
-      month: 'short',
-    });
+    new Date(`${date}T00:00:00`).toLocaleDateString(
+      i18n.language === 'ta' ? 'ta-IN' : 'en-IN',
+      { weekday: 'short', day: 'numeric', month: 'short' }
+    );
 
+  const today = weather?.forecast?.[0];
   const hasCurrent = Boolean(weather?.current);
+  const rainToday = today && today.precipitation > 0.5 ? Math.round(today.precipitation) : null;
 
-  return (
-    <div className="bg-gradient-to-r from-blue-50 to-green-50 border-b border-green-200">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-3 sm:py-4">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-base sm:text-lg font-bold text-gray-800">{t('weatherToday')}</h3>
-          {!loading && weather && (
-            <span className="text-xs sm:text-sm font-medium text-gray-500">{district}</span>
-          )}
+  // Compute the location state block (requesting / denied / unavailable / unsupported /
+  // outside-TN / farm fallback) — each is a compact, useful, honest state.
+  const renderLocationState = () => {
+    const isGranted = locStatus === 'granted' && detectedDistrict;
+
+    if (isGranted) {
+      return (
+        <div className="flex items-center gap-1.5 text-sm font-semibold text-emerald-800">
+          <MapPin className="h-4 w-4 text-emerald-700" />
+          <span>{t('detectedLocation')}:</span>
+          <span>{detectedDistrict}</span>
         </div>
+      );
+    }
 
-        {loading ? (
-          <div className="flex items-center gap-2 text-gray-500 text-sm sm:text-base">
-            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-green-600"></div>
-            {t('weatherLoading')}
-          </div>
-        ) : errorKey ? (
-          <div className="flex flex-wrap items-center gap-3">
-            <p
-              role="alert"
-              className="inline-block text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2"
-            >
-              {t(errorKey)}
-            </p>
-            <button
-              onClick={() => setRetryKey((k) => k + 1)}
-              className="text-sm font-semibold text-green-700 border border-green-300 rounded-lg px-3 py-2 bg-white hover:bg-green-50"
-            >
-              {t('retry')}
-            </button>
-          </div>
-        ) : weather && hasCurrent ? (
-          <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
-            <div className="flex items-center gap-4">
-              <div>
-                <div className="text-2xl sm:text-3xl font-bold text-gray-800">
-                  {weather.current!.temperature}°C
-                </div>
-                <div className="text-xs sm:text-sm text-gray-600">{weather.current!.summary}</div>
+    if (useFarmDistrict && profile?.district) {
+      return (
+        <div className="flex items-center gap-2 text-sm">
+          <MapPin className="h-4 w-4 text-emerald-700" />
+          <span className="font-semibold text-emerald-800">
+            {t('farmDistrictLabel')}: {profile.district}
+          </span>
+          <button
+            onClick={() => setUseFarmDistrict(false)}
+            className="rounded-full border border-gray-300 px-2.5 py-0.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+          >
+            {t('detectLocation')}
+          </button>
+        </div>
+      );
+    }
+
+    if (locStatus === 'requesting') {
+      return (
+        <div className="flex items-center gap-1.5 text-sm text-gray-500">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          {t('locationRequesting')}
+        </div>
+      );
+    }
+
+    // Location is denied/unavailable/unsupported/outside-TN.
+    const message =
+      locStatus === 'denied'
+        ? t('locationDeniedMessage')
+        : locStatus === 'unsupported'
+          ? t('locationUnsupportedMessage')
+          : locStatus === 'outside-tn'
+            ? t('outsideTamilNaduMessage')
+            : t('locationUnavailableMessage');
+
+    return (
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="inline-flex items-center gap-1.5 font-semibold text-amber-800">
+          <AlertTriangle className="h-4 w-4 text-amber-600" />
+          {locStatus === 'denied'
+            ? t('locationDenied')
+            : locStatus === 'unsupported'
+              ? t('locationUnsupported')
+              : locStatus === 'outside-tn'
+                ? t('outsideTamilNadu')
+                : t('locationUnavailable')}
+        </span>
+        <span className="basis-full text-xs text-gray-500 sm:basis-auto sm:ml-1">{message}</span>
+        <button
+          onClick={() => void requestLocation()}
+          className="rounded-full border border-emerald-600 px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+        >
+          {t('retry')}
+        </button>
+        {profile?.district && !useFarmDistrict && (
+          <button
+            onClick={() => setUseFarmDistrict(true)}
+            className="rounded-full border border-gray-300 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+          >
+            {t('useFarmDistrict', { district: profile.district })}
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  const renderWeatherBody = () => {
+    if (loading) {
+      return (
+        <div className="flex flex-wrap items-center gap-4 sm:gap-8">
+          <div className="h-10 w-28 animate-pulse rounded-lg bg-gray-200" />
+          <div className="h-4 w-40 animate-pulse rounded bg-gray-200" />
+          <div className="ml-auto hidden h-16 w-48 animate-pulse rounded-xl bg-gray-200 sm:block" />
+        </div>
+      );
+    }
+
+    if (errorKey) {
+      return (
+        <div className="flex flex-wrap items-center gap-3">
+          <p
+            role="alert"
+            className="text-sm text-red-700"
+          >
+            {t(errorKey)}
+          </p>
+          <button
+            onClick={() => setRetryKey((k) => k + 1)}
+            className="rounded-full border border-emerald-600 bg-white px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+          >
+            {t('retry')}
+          </button>
+        </div>
+      );
+    }
+
+    if (weather && hasCurrent) {
+      return (
+        <>
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+            <div className="flex items-center gap-3">
+              <div className="text-3xl font-bold text-emerald-900 sm:text-4xl">
+                {Math.round(weather.current!.temperature)}°C
               </div>
-              <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs sm:text-sm">
-                <div>
-                  <div className="text-gray-500">💨 {t('wind')}</div>
-                  <div className="font-semibold text-gray-800">
-                    {weather.current!.windspeed} km/h
-                  </div>
+              <div className="text-sm text-gray-600">
+                <div className="font-medium">{weather.current!.summary}</div>
+                <div className="text-xs text-gray-500">
+                  {t('wind')}: {Math.round(weather.current!.windspeed)} km/h
+                  {rainToday !== null && (
+                    <span className="ml-2">· ☔ {rainToday}mm</span>
+                  )}
                 </div>
-                {weather.forecast.length > 0 && (
-                  <div>
-                    <div className="text-gray-500">💧 {t('rain')}</div>
-                    <div className="font-semibold text-gray-800">
-                      {weather.forecast[0].precipitation}mm
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
+
             {weather.forecast.length > 0 && (
-              <div className="flex gap-2 overflow-x-auto">
+              <div className="flex gap-2 overflow-x-auto pb-1">
                 {weather.forecast.map((day) => (
                   <div
                     key={day.date}
-                    className="bg-white rounded-lg px-3 py-2 text-center border border-green-200 min-w-[96px]"
+                    className="min-w-[88px] rounded-xl border border-emerald-100 bg-white px-2.5 py-2 text-center shadow-sm"
                   >
-                    <div className="text-xs font-semibold text-gray-700">{formatDate(day.date)}</div>
-                    <div className="text-gray-500 text-xs">{day.summary}</div>
-                    <div className="text-xs text-gray-800 font-semibold">
-                      {day.temperatureMax}° / {day.temperatureMin}°
+                    <div className="text-[11px] font-semibold text-gray-600">
+                      {formatDate(day.date)}
                     </div>
-                    <div className="text-xs text-gray-600">💧 {day.precipitation}mm</div>
+                    <div className="text-[11px] text-gray-500">{day.summary}</div>
+                    <div className="text-xs font-bold text-emerald-900">
+                      {Math.round(day.temperatureMax)}° / {Math.round(day.temperatureMin)}°
+                    </div>
+                    <div className="text-[11px] text-gray-500">
+                      ☔ {day.precipitation}mm
+                    </div>
                   </div>
                 ))}
               </div>
             )}
           </div>
-        ) : weather ? (
-          <div className="flex flex-wrap items-center gap-3">
-            <p className="text-sm sm:text-base text-gray-500">{t('weatherUnavailable')}</p>
-            <button
-              onClick={() => setRetryKey((k) => k + 1)}
-              className="text-sm font-semibold text-green-700 border border-green-300 rounded-lg px-3 py-2 bg-white hover:bg-green-50"
-            >
-              {t('retry')}
-            </button>
+
+          {/* Farming insight derived ONLY from the backend weather numbers */}
+          {rainToday !== null || weather.forecast[0] ? (
+            <div className="mt-2 flex items-center gap-1.5 text-xs text-emerald-800">
+              <Leaf className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+              <span className="font-semibold">{t('farmingInsight')}:</span>
+              <span>
+                {rainToday !== null
+                  ? t('insightRainToday', { mm: rainToday }) + ' · '
+                  : ''}
+                {t('insightTempRange', {
+                  min: Math.round(weather.forecast[0].temperatureMin),
+                  max: Math.round(weather.forecast[0].temperatureMax),
+                })}
+              </span>
+            </div>
+          ) : (
+            <div className="mt-2 flex items-center gap-1.5 text-xs text-emerald-800">
+              <CloudSun className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+              <span className="font-semibold">{t('farmingInsight')}:</span>
+              <span>{t('insightConditions', { condition: weather.current!.summary })}</span>
+            </div>
+          )}
+        </>
+      );
+    }
+
+    if (weather) {
+      // Backend returned status:"unknown" — degrade compactly with Retry (no fabrication).
+      return (
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="text-sm text-gray-500">{t('weatherUnavailable')}</p>
+          <button
+            onClick={() => setRetryKey((k) => k + 1)}
+            className="rounded-full border border-emerald-600 bg-white px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+          >
+            {t('retry')}
+          </button>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  return (
+    <div className="shrink-0 border-b border-emerald-100 bg-gradient-to-r from-emerald-50 via-white to-green-50">
+      <div className="mx-auto max-w-6xl px-3 py-2.5 sm:px-4 sm:py-3">
+        {renderLocationState()}
+
+        {queryDistrict && (
+          <div className="mt-1.5 flex flex-col gap-1.5 lg:flex-row lg:items-center lg:gap-6">
+            {renderWeatherBody()}
           </div>
-        ) : null}
+        )}
       </div>
     </div>
   );

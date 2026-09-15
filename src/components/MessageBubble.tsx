@@ -1,5 +1,6 @@
 import { Message } from '../types';
 import { useTranslation } from 'react-i18next';
+import { Sprout } from 'lucide-react';
 import { DiagnosisCard } from './DiagnosisCard';
 
 interface MessageBubbleProps {
@@ -17,12 +18,19 @@ export const MessageBubble = ({ message }: MessageBubbleProps) => {
       : new Date(message.timestamp);
 
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+    <div className={`flex w-full items-start gap-2.5 ${isUser ? 'justify-end' : 'justify-start'}`}>
+      {/* AI avatar (agent identity only — never data) */}
+      {!isUser && (
+        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-green-700 shadow-sm">
+          <Sprout className="h-4 w-4 text-white" />
+        </div>
+      )}
+
       <div
-        className={`max-w-[85%] sm:max-w-[80%] rounded-2xl sm:rounded-3xl p-3 sm:p-4 md:p-5 shadow-md ${
+        className={`max-w-[86%] rounded-2xl px-3.5 py-2.5 text-[15px] leading-relaxed shadow-sm sm:max-w-[75%] ${
           isUser
-            ? 'bg-green-600 text-white'
-            : 'bg-white text-gray-800 border-2 border-gray-200'
+            ? 'rounded-tr-md bg-gradient-to-br from-emerald-600 to-green-700 text-white'
+            : 'rounded-tl-md border border-gray-100 bg-white text-gray-800'
         }`}
       >
         {/* FRONTEND IMAGE PREVIEW (before backend process) */}
@@ -30,15 +38,13 @@ export const MessageBubble = ({ message }: MessageBubbleProps) => {
           <img
             src={message.image.previewUrl}
             alt={t('uploadedImage')}
-            className="rounded-xl sm:rounded-2xl mb-2 sm:mb-3 max-w-full h-auto"
+            className="mb-2 max-h-64 max-w-full rounded-xl object-cover"
           />
         )}
 
         {/* TEXT (optional) */}
         {message.text && (
-          <p className="text-base sm:text-lg leading-relaxed whitespace-pre-wrap">
-            {message.text}
-          </p>
+          <p className="whitespace-pre-wrap break-words">{message.text}</p>
         )}
 
         {/* BACKEND IMAGE DIAGNOSIS (image-turn assistant response) */}
@@ -48,16 +54,14 @@ export const MessageBubble = ({ message }: MessageBubbleProps) => {
 
         {/* TIMESTAMP */}
         <div
-          className={`flex items-center gap-2 mt-1 sm:mt-2 text-xs sm:text-sm ${
-            isUser ? 'text-green-100' : 'text-gray-500'
+          className={`mt-1.5 text-[11px] ${
+            isUser ? 'text-emerald-100' : 'text-gray-400'
           }`}
         >
-          <span>
-            {timestamp.toLocaleTimeString([], {
-              hour: '2-digit',
-              minute: '2-digit',
-            })}
-          </span>
+          {timestamp.toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+          })}
         </div>
       </div>
     </div>

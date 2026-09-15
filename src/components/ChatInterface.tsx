@@ -1,8 +1,16 @@
 import { useState, useRef, useEffect, type ChangeEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
+import { useLocation } from '../context/LocationContext';
 import { Message, ImageAttachment, SessionMessage } from '../types';
-import { Send, Image as ImageIcon, LogOut, Languages, Loader2 } from 'lucide-react';
+import {
+  Send,
+  Image as ImageIcon,
+  Loader2,
+  Sprout,
+  MapPin,
+  MessageSquarePlus,
+} from 'lucide-react';
 import { MessageBubble } from './MessageBubble';
 import { sendChatMessage, getChatSession, uploadImage } from '../api';
 import { ApiClientError, friendlyMessageKey } from '../api/client';
@@ -41,8 +49,9 @@ export const ChatInterface = ({
   onMessageSent,
   onOpenSidebar,
 }: Props) => {
-  const { t, i18n } = useTranslation();
-  const { user, logout, language, setLanguage } = useAuth();
+  const { t } = useTranslation();
+  const { user, language } = useAuth();
+  const { district: locationDistrict, status: locStatus } = useLocation();
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -50,7 +59,6 @@ export const ChatInterface = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
-  const [showLangMenu, setShowLangMenu] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
   // Real send stages backing the loader copy: upload → analyze (image only) → processing.
   const [sendStage, setSendStage] = useState<'idle' | 'uploading' | 'analyzing' | 'processing'>('idle');
@@ -277,94 +285,82 @@ export const ChatInterface = ({
     }
   };
 
-  const toggleLanguage = () => {
-    const newLang = language === 'en' ? 'ta' : 'en';
-    setLanguage(newLang);
-    i18n.changeLanguage(newLang);
-    setShowLangMenu(false);
-  };
+  // Time-of-day greeting (premium entry into the assistant).
+  const displayName =
+    user?.name?.trim() || user?.email?.split('@')[0]?.trim() || 'Vivasayi';
+  const hour = new Date().getHours();
+  const greetKey =
+    hour < 12 ? 'goodMorning' : hour < 17 ? 'goodAfternoon' : 'goodEvening';
+
+  const suggestionKeys = ['cropSuggestions', 'pestControl', 'fertilizerQuestion', 'weather'];
+
+  const canSend = Boolean(input.trim()) || Boolean(selectedImage);
 
   return (
-    <div className="flex flex-col h-screen bg-gradient-to-b from-green-50 to-white overflow-hidden">
-
-      {/* HEADER */}
-      <header className="sticky top-0 z-30 bg-green-600 text-white px-3 py-2 shadow-lg">
-        <div className="flex items-center justify-between max-w-4xl mx-auto">
-
-          <div className="flex items-center gap-2 overflow-hidden">
-            <button
-              onClick={onOpenSidebar}
-              aria-label={t('openSidebar')}
-              title={t('openSidebar')}
-              className="lg:hidden p-2 hover:bg-green-700 rounded-lg"
-            >
-              ☰
-            </button>
-
-            <div className="w-9 h-9 sm:w-11 sm:h-11 bg-white rounded-full flex items-center justify-center">
-              <span className="text-xl sm:text-2xl">🌾</span>
-            </div>
-
-            <div className="overflow-hidden">
-              <h1 className="text-sm sm:text-lg font-bold truncate">
-                {t('appTitle')}
-              </h1>
-              <p className="hidden sm:block text-xs text-green-100 truncate">
-                {user?.email}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => setShowLangMenu(!showLangMenu)}
-              aria-label={t('changeLanguage')}
-              title={t('changeLanguage')}
-              className="p-2 hover:bg-green-700 rounded-lg"
-            >
-              <Languages className="w-5 h-5" />
-            </button>
-
-            <button
-              onClick={logout}
-              aria-label={t('logout')}
-              title={t('logout')}
-              className="p-2 hover:bg-green-700 rounded-lg"
-            >
-              <LogOut className="w-5 h-5" />
-            </button>
-          </div>
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-gray-50">
+      {/* WORKSPACE HEADER (slim: hamburger + context) */}
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 bg-white px-3 sm:px-4">
+        <button
+          onClick={onOpenSidebar}
+          aria-label={t('openSidebar')}
+          title={t('openSidebar')}
+          className="rounded-lg p-1.5 text-gray-600 hover:bg-gray-100 lg:hidden"
+        >
+          <MessageSquarePlus className="h-5 w-5" />
+        </button>
+        <div className="flex min-w-0 items-center gap-2">
+          <Sprout className="h-5 w-5 shrink-0 text-emerald-600" />
+          <h2 className="truncate text-sm font-semibold text-gray-800">
+            {activeChatId ? t('chat') : t('appTitle')}
+          </h2>
         </div>
-
-        {showLangMenu && (
-          <div className="max-w-4xl mx-auto mt-2 bg-white rounded-xl shadow overflow-hidden">
-            <button
-              onClick={toggleLanguage}
-              className="w-full p-3 text-left text-gray-800 hover:bg-green-50 font-semibold"
-            >
-              {language === 'en' ? 'தமிழ் (Tamil)' : 'English'}
-            </button>
-          </div>
-        )}
       </header>
 
       {/* CHAT BODY */}
-      <main className="flex-1 overflow-y-auto px-3 py-4">
-        <div className="max-w-4xl mx-auto space-y-4">
+      <main className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-3xl space-y-3 px-3 py-4 sm:px-4">
           {messages.map((m, i) => (
             <MessageBubble key={`${m.id}-${i}`} message={m} />
           ))}
 
           {messages.length === 0 && !isLoadingHistory && !isProcessing && !historyError && (
-            <div className="text-center pt-16 sm:pt-24 px-4">
-              <div className="text-5xl mb-4">🌾</div>
-              <p className="text-gray-600 text-base sm:text-lg">{t('chatEmptyState')}</p>
+            <div className="flex flex-col items-center px-2 pt-10 sm:pt-16 text-center">
+              <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500 to-green-700 shadow-lg">
+                <Sprout className="h-8 w-8 text-white" />
+              </div>
+
+              <h3 className="text-xl font-bold text-gray-800 sm:text-2xl">
+                {t(greetKey, { name: displayName })}
+              </h3>
+              <p className="mt-1 text-sm text-gray-500 sm:text-base">
+                {t('askVivasayi')}
+              </p>
+
+              {locationDistrict && locStatus === 'granted' && (
+                <div className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800">
+                  <MapPin className="h-3.5 w-3.5" />
+                  {t('locationYourDistrict', { district: locationDistrict })}
+                </div>
+              )}
+
+              <div className="mt-6 flex max-w-xl flex-wrap items-center justify-center gap-2">
+                {suggestionKeys.map((key) => (
+                  <button
+                    key={key}
+                    onClick={() => setInput(t(key))}
+                    disabled={isProcessing}
+                    className="rounded-full border border-gray-200 bg-white px-3.5 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition-colors hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-800"
+                  >
+                    {t(key)}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
           {isLoadingHistory && (
-            <div className="flex items-center gap-2 text-gray-600">
-              <Loader2 className="w-5 h-5 animate-spin" />
+            <div className="flex items-center gap-2 px-2 text-sm text-gray-500">
+              <Loader2 className="h-4 w-4 animate-spin" />
               <span>{t('processing')}</span>
             </div>
           )}
@@ -381,8 +377,8 @@ export const ChatInterface = ({
           )}
 
           {isProcessing && (
-            <div className="flex items-center gap-2 text-gray-600">
-              <Loader2 className="w-5 h-5 animate-spin" />
+            <div className="flex items-center gap-2 px-2 text-sm text-gray-500">
+              <Loader2 className="h-4 w-4 animate-spin" />
               <span>
                 {sendStage === 'uploading'
                   ? t('uploadingImage')
@@ -397,80 +393,80 @@ export const ChatInterface = ({
         </div>
       </main>
 
-      {/* INPUT BAR */}
-      <footer className="bg-white border-t border-gray-200 px-3 py-3">
-        <div className="max-w-4xl mx-auto">
-
-          {/* IMAGE ATTACH ERROR (user-safe i18n) */}
+      {/* COMPOSER (premium single bar) */}
+      <footer className="shrink-0 border-t border-gray-200 bg-white px-3 py-2.5 sm:px-4 sm:py-3">
+        <div className="mx-auto max-w-3xl">
           {attachError && (
             <p
               role="alert"
-              className="mb-2 text-sm sm:text-base text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2"
+              className="mb-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
             >
               {t(attachError)}
             </p>
           )}
 
-          {/* IMAGE PREVIEW (ChatGPT-style) */}
           {selectedImage && (
             <div className="mb-2 relative w-fit max-w-full">
               <img
                 src={selectedImage.previewUrl}
                 alt={t('attachImage')}
-                className="max-w-[160px] max-h-40 rounded-xl border object-cover"
+                className="max-h-36 max-w-[140px] rounded-xl border object-cover shadow-sm"
               />
               <button
                 onClick={removeImage}
                 disabled={isProcessing}
                 aria-label={t('removeImage')}
                 title={t('removeImage')}
-                className="absolute -top-2 -right-2 bg-black text-white rounded-full w-6 h-6 text-sm"
+                className="absolute -top-2 -right-2 flex h-6 w-6 items-center justify-center rounded-full bg-gray-900 text-sm text-white shadow hover:bg-red-600 disabled:opacity-50"
               >
-                ×
+                <span className="leading-none">×</span>
               </button>
             </div>
           )}
 
-          <div className="flex flex-col sm:flex-row gap-2">
-            <div className="flex gap-2">
-              <VoiceRecorder onResult={setInput} />
+          <div className="flex items-center gap-1.5 rounded-2xl border border-gray-200 bg-white py-1 pl-1.5 pr-1.5 shadow-sm transition-shadow focus-within:border-emerald-400 focus-within:ring-2 focus-within:ring-emerald-100">
+            <VoiceRecorder onResult={setInput} />
 
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isProcessing}
-                aria-label={t('attachImage')}
-                title={t('attachImage')}
-                className="p-3 bg-blue-600 text-white rounded-xl disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                <ImageIcon className="w-5 h-5" />
-              </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isProcessing}
+              aria-label={t('attachImage')}
+              title={t('attachImage')}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-gray-600 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <ImageIcon className="h-5 w-5" />
+            </button>
 
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                className="hidden"
-                onChange={handleFileSelect}
-              />
-            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={handleFileSelect}
+            />
 
-            <div className="flex gap-2 flex-1">
-              <input
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSend()}
-                placeholder={t('typeMessage')}
-                className="flex-1 p-3 border rounded-xl"
-              />
-              <button
-                onClick={handleSend}
-                disabled={isProcessing || (!input.trim() && !selectedImage)}
-                aria-label={t('send')}
-                className="p-3 bg-green-600 text-white rounded-xl disabled:bg-gray-400"
-              >
-                <Send className="w-5 h-5" />
-              </button>
-            </div>
+            <input
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSend()}
+              placeholder={t('typeMessage')}
+              aria-label={t('typeMessage')}
+              className="min-w-0 flex-1 bg-transparent px-1 py-2 text-[15px] leading-relaxed text-gray-800 outline-none placeholder:text-gray-400 sm:text-base"
+            />
+
+            <button
+              onClick={handleSend}
+              disabled={isProcessing || !canSend}
+              aria-label={t('send')}
+              title={t('send')}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-r from-emerald-600 to-green-700 text-white shadow-sm transition-all hover:from-emerald-700 hover:to-green-800 disabled:cursor-not-allowed disabled:from-gray-300 disabled:to-gray-300"
+            >
+              {isProcessing ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : (
+                <Send className="h-5 w-5" />
+              )}
+            </button>
           </div>
         </div>
       </footer>

@@ -7,30 +7,28 @@ export const LoginScreen = () => {
   const { login, isAuthenticating, authError } = useAuth();
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-green-50 to-green-100 flex items-center justify-center p-3 sm:p-4">
-      <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl p-4 sm:p-6 md:p-8 lg:p-12 max-w-4xl w-full mx-2">
-        <div className="flex flex-col justify-center gap-4 sm:gap-6 md:gap-8">
-
-          {/* Login Section */}
-          <div className="w-full flex flex-col justify-center">
-            <div className="flex justify-center mb-4 sm:mb-6">
-              <div className="bg-green-600 p-5 sm:p-6 md:p-7 rounded-full shadow-lg">
-                <span className="text-4xl sm:text-5xl md:text-6xl">🌾</span>
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-emerald-700 via-green-800 to-emerald-950 p-3 sm:p-4">
+      <div className="w-full max-w-md mx-2">
+        <div className="rounded-3xl bg-white p-6 sm:p-8 shadow-2xl">
+          <div className="flex flex-col">
+            <div className="flex justify-center mb-5">
+              <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-emerald-500 to-green-700 shadow-lg">
+                <span className="text-5xl">🌾</span>
               </div>
             </div>
 
-            <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-800 mb-2 sm:mb-3 text-center">
+            <h1 className="mb-1 text-center text-2xl sm:text-3xl font-bold text-gray-800">
               {t('welcome')}
             </h1>
 
-            <p className="text-gray-600 mb-6 sm:mb-8 text-base sm:text-lg text-center">
+            <p className="mb-6 text-center text-base text-gray-500">
               {t('askQuestion')}
             </p>
 
             {authError && (
               <p
                 role="alert"
-                className="mb-4 text-center text-sm sm:text-base text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2"
+                className="mb-4 text-center text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2"
               >
                 {t(authError)}
               </p>
@@ -39,16 +37,16 @@ export const LoginScreen = () => {
             <button
               onClick={login}
               disabled={isAuthenticating}
-              className="w-full bg-white border-2 border-gray-300 hover:border-green-600 hover:bg-green-50 text-gray-800 font-semibold py-3 sm:py-4 md:py-5 px-4 sm:px-6 rounded-xl sm:rounded-2xl transition-all duration-200 flex items-center justify-center gap-2 sm:gap-3 text-base sm:text-lg shadow-md hover:shadow-lg disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:border-gray-300 disabled:hover:bg-white"
+              className="w-full flex items-center justify-center gap-2.5 rounded-2xl border-2 border-gray-200 bg-white py-3.5 px-4 text-base font-semibold text-gray-800 shadow-sm transition-all hover:border-emerald-500 hover:bg-emerald-50 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:border-gray-200 disabled:hover:bg-white"
             >
               {isAuthenticating ? (
                 <>
-                  <Loader2 className="w-5 h-5 sm:w-6 sm:h-6 animate-spin" />
+                  <Loader2 className="h-5 w-5 animate-spin" />
                   {t('signingIn')}
                 </>
               ) : (
                 <>
-                  <svg className="w-5 h-5 sm:w-6 sm:h-6" viewBox="0 0 24 24">
+                  <svg className="h-5 w-5" viewBox="0 0 24 24">
                     <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
                     <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
                     <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
@@ -59,11 +57,10 @@ export const LoginScreen = () => {
               )}
             </button>
 
-            <div className="mt-4 sm:mt-6 text-center text-xs sm:text-sm text-gray-500">
+            <div className="mt-5 text-center text-sm text-gray-500">
               {t('personalizedWeatherAdvice')}
             </div>
           </div>
-
         </div>
       </div>
     </div>

@@ -22,7 +22,6 @@ const resources = {
       notFound: 'Not found.',
 
       // Farm profile & onboarding (Phase 3)
-      profileLoading: 'Loading your farm profile...',
       profileLoadFailed: 'Could not load your farm profile.',
       profileHeading: 'Let us set up your farm profile',
       profileDescription: 'Your farm details help us personalize farming advice. It only takes a moment.',
@@ -48,6 +47,40 @@ const resources = {
       english: 'English',
       tamil: 'தமிழ்',
       changeLanguage: 'Change Language',
+
+      // Location (device-based, session-level — separate from the farm profile district)
+      locationRequesting: 'Detecting location…',
+      detectLocation: 'Detect my location',
+      locationDenied: 'Location permission denied',
+      locationDeniedMessage: 'Allow location access to show local weather. You can still use the assistant.',
+      locationUnavailable: 'Location unavailable',
+      locationUnavailableMessage: 'Could not determine your location. Retry or use your farm district for weather.',
+      locationUnsupported: 'Location not supported',
+      locationUnsupportedMessage: 'Your browser does not support location. You can use your farm district for weather.',
+      outsideTamilNadu: 'Outside Tamil Nadu',
+      outsideTamilNaduMessage: 'Weather is available for Tamil Nadu districts. You can still use the farming assistant.',
+      detectedLocation: 'Detected location',
+      farmDistrictLabel: 'Farm district',
+      useFarmDistrict: 'Use farm district ({{district}}) for weather',
+      locationFailed: 'Location unavailable',
+
+      // Weather / farming insight (derived ONLY from backend-returned weather fields)
+      farmingInsight: "Today's Farming Insight",
+      insightRainToday: 'Rain expected today: {{mm}} mm',
+      insightRainTomorrow: 'Rain expected tomorrow: {{mm}} mm',
+      insightTempRange: 'Today ranges from {{min}}°C to {{max}}°C',
+      insightConditions: 'Now: {{condition}}',
+
+      // Navbar / greeting
+      goodMorning: 'Good morning, {{name}}',
+      goodAfternoon: 'Good afternoon, {{name}}',
+      goodEvening: 'Good evening, {{name}}',
+      askVivasayi: 'Ask Vivasayi AI',
+      setupProfile: 'Set up farm profile',
+      continueWithoutProfile: 'Continue without a profile',
+      profileIncomplete: 'Set up your farm profile to personalize farming advice.',
+      profileAfter: 'You can set up your farm profile any time from the top menu.',
+      locationYourDistrict: 'Your district: {{district}}',
       
       // Chat Interface
       typeMessage: 'Type your farming question...',
@@ -66,6 +99,7 @@ const resources = {
       clearAllChats: 'Clear All Chats',
       chat: 'Chat',
       openSidebar: 'Open chat history',
+      closeSidebar: 'Close chat history',
       appTitle: 'Tamil Nadu Farming Assistant',
 speak: 'Speak',
 stop: 'Stop',
@@ -209,11 +243,8 @@ allDeleted: 'All chats cleared successfully!',
       dry: 'Dry',
 
       // Weather Panel
-      weatherToday: "Today's Weather for Farmers",
-      weatherLoading: 'Loading weather...',
       weatherUnavailable: 'Weather unavailable',
       wind: 'Wind',
-      rain: 'Rain',
 
       // Image Diagnosis (Phase 5)
       attachImage: 'Attach image',
@@ -263,7 +294,6 @@ allDeleted: 'All chats cleared successfully!',
       notFound: 'கிடைக்கவில்லை.',
 
       // Farm profile & onboarding (Phase 3)
-      profileLoading: 'உங்கள் பண்ணை சுயவிவரம் ஏற்றப்படுகிறது...',
       profileLoadFailed: 'உங்கள் பண்ணை சுயவிவரத்தை ஏற்ற முடியவில்லை.',
       profileHeading: 'உங்கள் பண்ணை சுயவிவரத்தை அமைப்போம்',
       profileDescription: 'உங்கள் பண்ணை விவரங்கள் விவசாய ஆலோசனைகளை தனிப்பயனாக்க உதவுகிறது. ஒரு கணம் மட்டுமே ஆகும்.',
@@ -290,6 +320,40 @@ allDeleted: 'All chats cleared successfully!',
       tamil: 'தமிழ்',
       changeLanguage: 'மொழியை மாற்று',
 
+      // Location (device-based, session-level — separate from the farm profile district)
+      locationRequesting: 'இருப்பிடம் கண்டறியப்படுகிறது…',
+      detectLocation: 'என் இருப்பிடத்தை கண்டறி',
+      locationDenied: 'இருப்பிட அனுமதி மறுக்கப்பட்டது',
+      locationDeniedMessage: 'உள்ளூர் வானிலையைக் காட்ட இருப்பிட அனுமதி தேவை. இருப்பினும் உதவியாளரைப் பயன்படுத்தலாம்.',
+      locationUnavailable: 'இருப்பிடம் கிடைக்கவில்லை',
+      locationUnavailableMessage: 'உங்கள் இருப்பிடத்தை கண்டறிய முடியவில்லை. மீண்டும் முயற்சிக்கவும் அல்லது வானிலைக்கு உங்கள் பண்ணை மாவட்டத்தை பயன்படுத்தவும்.',
+      locationUnsupported: 'இருப்பிடம் ஆதரிக்கப்படவில்லை',
+      locationUnsupportedMessage: 'உங்கள் உலாவி இருப்பிடத்தை ஆதரிக்கவில்லை. வானிலைக்கு உங்கள் பண்ணை மாவட்டத்தை பயன்படுத்தலாம்.',
+      outsideTamilNadu: 'தமிழ்நாட்டிற்கு வெளியே',
+      outsideTamilNaduMessage: 'வானிலை தமிழ்நாடு மாவட்டங்களுக்கு மட்டுமே. இருப்பினும் விவசாய உதவியாளரைப் பயன்படுத்தலாம்.',
+      detectedLocation: 'கண்டறியப்பட்ட இருப்பிடம்',
+      farmDistrictLabel: 'பண்ணை மாவட்டம்',
+      useFarmDistrict: 'வானிலைக்கு பண்ணை மாவட்டத்தை ({{district}}) பயன்படுத்து',
+      locationFailed: 'இருப்பிடம் கிடைக்கவில்லை',
+
+      // Weather / farming insight (derived ONLY from backend-returned weather fields)
+      farmingInsight: 'இன்றைய விவசாய கணிப்பு',
+      insightRainToday: 'இன்று மழை எதிர்பார்க்கப்படுகிறது: {{mm}} மிமீ',
+      insightRainTomorrow: 'நாளை மழை எதிர்பார்க்கப்படுகிறது: {{mm}} மிமீ',
+      insightTempRange: 'இன்று {{min}}°C முதல் {{max}}°C வரை',
+      insightConditions: 'இப்போது: {{condition}}',
+
+      // Navbar / greeting
+      goodMorning: 'காலை வணக்கம், {{name}}',
+      goodAfternoon: 'மதிய வணக்கம், {{name}}',
+      goodEvening: 'மாலை வணக்கம், {{name}}',
+      askVivasayi: 'விவசாயியிடம் கேளுங்கள்',
+      setupProfile: 'பண்ணை சுயவிவரம் அமைக்கவும்',
+      continueWithoutProfile: 'சுயவிவரம் இல்லாமல் தொடரவும்',
+      profileIncomplete: 'விவசாய ஆலோசனைகளை தனிப்பயனாக்க உங்கள் பண்ணை சுயவிவரத்தை அமைக்கவும்.',
+      profileAfter: 'மேலே உள்ள மெனுவிலிருந்து எப்போது வேண்டுமானாலும் பண்ணை சுயவிவரத்தை அமைக்கலாம்.',
+      locationYourDistrict: 'உங்கள் மாவட்டம்: {{district}}',
+
       // Add to Tamil section - Toast Messages  
 chatCreated: 'புதிய உரையாடல் வெற்றிகரமாக உருவாக்கப்பட்டது!',
 chatCreateFailed: 'புதிய உரையாடலை உருவாக்க முடியவில்லை',
@@ -313,6 +377,7 @@ allDeleted: 'அனைத்து உரையாடல்களும் வ�
       clearAllChats: 'அனைத்து உரையாடல்களையும் நீக்கு',
       chat: 'உரையாடல்',
       openSidebar: 'உரையாடல் வரலாற்றை திற',
+      closeSidebar: 'உரையாடல் வரலாற்றை மூடு',
       appTitle: 'தமிழ்நாடு விவசாய உதவியாளர்',
 speak: 'பேசவும்',
 stop: 'நிறுத்தவும்',
@@ -450,11 +515,8 @@ micError: 'மைக்ரோஃபோன் பிழை',
       dry: 'வறண்ட',
 
       // Weather Panel
-      weatherToday: 'இன்றைய விவசாய வானிலை',
-      weatherLoading: 'வானிலை ஏற்றுகிறது...',
       weatherUnavailable: 'வானிலை தகவல் இல்லை',
       wind: 'காற்று',
-      rain: 'மழை',
 
       // Image Diagnosis (Phase 5)
       attachImage: 'படத்தை இணைக்கவும்',
