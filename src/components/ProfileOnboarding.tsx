@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
+import { useLocation } from '../context/LocationContext';
 import { createProfile } from '../api';
 import { ApiClientError } from '../api/client';
 import { tamilNaduDistricts } from '../config/tamilnaduDistricts';
@@ -9,16 +10,22 @@ import type { FarmProfile, Language } from '../types';
 
 interface Props {
   onComplete: (profile: FarmProfile) => void;
+  onSkip?: () => void;
 }
 
 const MAX_CROPS = 20;
 const MAX_CROP_LENGTH = 100;
 
-export const ProfileOnboarding = ({ onComplete }: Props) => {
+export const ProfileOnboarding = ({ onComplete, onSkip }: Props) => {
   const { t, i18n } = useTranslation();
   const { language, setLanguage } = useAuth();
+  // Device location is a convenience pre-fill only — the farmer still chooses and owns the
+  // district saved to the profile. Location is never equated with the farm district.
+  const { district: detectedDistrict, status: locStatus } = useLocation();
 
-  const [district, setDistrict] = useState('');
+  const [district, setDistrict] = useState(
+    locStatus === 'granted' && detectedDistrict ? detectedDistrict : ''
+  );
   const [crops, setCrops] = useState<string[]>([]);
   const [cropInput, setCropInput] = useState('');
   const [acresInput, setAcresInput] = useState('');
@@ -112,10 +119,15 @@ export const ProfileOnboarding = ({ onComplete }: Props) => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-green-50 to-white flex items-center justify-center p-4 overflow-y-auto">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={t('profileHeading')}
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-emerald-950/50 p-4 backdrop-blur-sm"
+    >
       <div className="bg-white rounded-3xl shadow-2xl p-5 sm:p-8 md:p-10 max-w-lg w-full mx-2 my-6">
         <div className="flex justify-center mb-4">
-          <div className="bg-green-600 p-4 sm:p-5 rounded-full shadow-lg">
+          <div className="bg-gradient-to-br from-emerald-500 to-green-700 p-4 sm:p-5 rounded-full shadow-lg">
             <span className="text-3xl sm:text-4xl">🌾</span>
           </div>
         </div>
@@ -139,7 +151,7 @@ export const ProfileOnboarding = ({ onComplete }: Props) => {
               setDistrict(e.target.value);
               setErrors(prev => ({ ...prev, district: undefined }));
             }}
-            className="w-full p-3 border rounded-xl bg-white"
+            className="w-full p-3 border border-gray-200 rounded-xl bg-white outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
           >
             <option value="">{t('district')}…</option>
             {tamilNaduDistricts.map(d => (
@@ -171,7 +183,7 @@ export const ProfileOnboarding = ({ onComplete }: Props) => {
                 }
               }}
               placeholder={t('cropPlaceholder')}
-              className="flex-1 p-3 border rounded-xl"
+              className="flex-1 p-3 border border-gray-200 rounded-xl outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
             />
             <button
               type="button"
@@ -227,7 +239,7 @@ export const ProfileOnboarding = ({ onComplete }: Props) => {
               setErrors(prev => ({ ...prev, acres: undefined }));
             }}
             placeholder={t('acresPlaceholder')}
-            className="w-full p-3 border rounded-xl"
+            className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
           />
           {errors.acres && (
             <p role="alert" className="text-sm text-red-600 mt-1">{t(errors.acres)}</p>
@@ -272,9 +284,9 @@ export const ProfileOnboarding = ({ onComplete }: Props) => {
         <button
           onClick={handleSubmit}
           disabled={isSubmitting}
-          className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-xl
+          className="w-full bg-gradient-to-r from-emerald-600 to-green-700 hover:from-emerald-700 hover:to-green-800 text-white font-bold py-3 px-4 rounded-xl
             text-base sm:text-lg shadow-md hover:shadow-lg transition-all duration-200
-            disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:bg-green-600
+            disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:from-emerald-600 disabled:hover:to-green-700
             flex items-center justify-center gap-2"
         >
           {isSubmitting ? (
@@ -286,6 +298,15 @@ export const ProfileOnboarding = ({ onComplete }: Props) => {
             t('saveProfile')
           )}
         </button>
+
+        {onSkip && (
+          <button
+            onClick={onSkip}
+            className="mt-3 w-full text-center text-sm font-medium text-gray-500 hover:text-gray-700"
+          >
+            {t('continueWithoutProfile')}
+          </button>
+        )}
       </div>
     </div>
   );

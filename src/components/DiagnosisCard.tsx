@@ -35,8 +35,11 @@ export const DiagnosisCard = ({ diagnosis }: DiagnosisCardProps) => {
     (vision.likelyIssues && vision.likelyIssues.length > 0);
 
   return (
-    <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-      <p className="font-semibold mb-1">{t('imageDiagnosis')}</p>
+    <div className="mt-2.5 rounded-xl border border-emerald-100 bg-emerald-50/70 p-3 text-sm text-emerald-950">
+      <p className="mb-1.5 flex items-center gap-1.5 font-semibold">
+        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-600 text-xs text-white">🌱</span>
+        {t('imageDiagnosis')}
+      </p>
 
       {vision.summary && (
         <p className="mb-2 leading-relaxed whitespace-pre-wrap">{vision.summary}</p>
@@ -50,7 +53,7 @@ export const DiagnosisCard = ({ diagnosis }: DiagnosisCardProps) => {
 
       {vision.symptoms && vision.symptoms.length > 0 && (
         <div className="mb-2">
-          <p className="font-semibold mb-1">{t('symptoms')}</p>
+          <p className="mb-1 font-semibold">{t('symptoms')}</p>
           <ul className="list-disc list-inside space-y-0.5">
             {vision.symptoms.map((symptom, index) => (
               <li key={index}>{symptom}</li>
@@ -61,17 +64,17 @@ export const DiagnosisCard = ({ diagnosis }: DiagnosisCardProps) => {
 
       {vision.likelyIssues && vision.likelyIssues.length > 0 && (
         <div className="mb-2">
-          <p className="font-semibold mb-1">{t('likelyIssues')}</p>
+          <p className="mb-1 font-semibold">{t('likelyIssues')}</p>
           {vision.likelyIssues.map((issue, index) => {
             const confLabel = confidenceLabel(issue);
             return (
-              <div key={index} className="mb-2">
+              <div key={index} className="mb-2 last:mb-0">
                 <p>
                   {issue.name ?? t('issueUnnamed')}
-                  {confLabel && <span className="ml-1 font-medium">({confLabel})</span>}
+                  {confLabel && <span className="ml-1 rounded-full bg-white px-1.5 py-0.5 text-[11px] font-medium text-emerald-800">{confLabel}</span>}
                 </p>
                 {issue.evidence && issue.evidence.length > 0 && (
-                  <ul className="list-disc list-inside pl-2 text-xs space-y-0.5 opacity-90">
+                  <ul className="pl-2 text-xs list-disc list-inside space-y-0.5 opacity-90">
                     {issue.evidence.map((item, i) => (
                       <li key={i}>{item}</li>
                     ))}
@@ -84,11 +87,11 @@ export const DiagnosisCard = ({ diagnosis }: DiagnosisCardProps) => {
       )}
 
       {!hasFindings && (
-        <p className="text-amber-800">{t('diagnosisUnavailable')}</p>
+        <p className="text-emerald-900">{t('diagnosisUnavailable')}</p>
       )}
 
       {vision.uncertain && (
-        <p className="mt-2 text-amber-800 font-medium">{t('diagnosisUncertain')}</p>
+        <p className="mt-2 font-medium text-emerald-900">{t('diagnosisUncertain')}</p>
       )}
     </div>
   );

@@ -141,26 +141,31 @@ export default function ChatSidebar({
       {isOpen && (
         <div
           onClick={() => setIsOpen(false)}
-          className="fixed inset-0 bg-black/40 z-40 lg:hidden"
+          className="fixed inset-0 z-30 bg-black/40 lg:hidden"
         />
       )}
 
-      {/* SIDEBAR */}
+      {/* SIDEBAR — absolute inside the workspace row: slides under the navbar, never clipped */}
       <aside
         className={`
-          fixed lg:static top-0 left-0 z-50 h-full
+          absolute lg:static top-0 left-0 z-40 h-full
           w-72 lg:w-64
-          bg-gray-100 border-r
+          bg-gray-50 border-r border-gray-200
           transform transition-transform duration-300
           ${isOpen ? 'translate-x-0' : '-translate-x-full'}
           lg:translate-x-0
-          flex flex-col p-4
+          flex flex-col p-3
+          shadow-lg lg:shadow-none
         `}
       >
         {/* MOBILE HEADER */}
         <div className="flex items-center justify-between lg:hidden mb-3">
-          <h2 className="font-bold text-lg">{t('chats')}</h2>
-          <button onClick={() => setIsOpen(false)}>
+          <h2 className="font-bold text-lg text-gray-800">{t('chats')}</h2>
+          <button
+            onClick={() => setIsOpen(false)}
+            aria-label={t('closeSidebar')}
+            className="p-1.5 rounded-lg hover:bg-gray-200"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -168,15 +173,15 @@ export default function ChatSidebar({
         <button
           onClick={handleNewChat}
           disabled={isCreating}
-          className="bg-green-600 text-white py-2 rounded-lg font-medium mb-3
-            hover:bg-green-700 disabled:opacity-70 disabled:cursor-not-allowed
-            disabled:hover:bg-green-600"
+          className="flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 to-green-700 text-white py-2.5 rounded-xl font-semibold mb-3
+            hover:from-emerald-700 hover:to-green-800 transition-all shadow-sm
+            disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:from-emerald-600 disabled:hover:to-green-700"
         >
           {isCreating ? (
-            <Loader2 className="w-4 h-4 animate-spin inline-block align-[-2px]" />
+            <Loader2 className="w-4 h-4 animate-spin shrink-0" />
           ) : (
-            <span>+</span>
-          )}{' '}
+            <span className="text-lg leading-none">+</span>
+          )}
           {t('newChat')}
         </button>
 
@@ -193,7 +198,7 @@ export default function ChatSidebar({
               </p>
               <button
                 onClick={() => void fetchChats()}
-                className="bg-green-600 hover:bg-green-700 text-white text-sm font-medium py-1.5 px-4 rounded-lg"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium py-1.5 px-4 rounded-lg"
               >
                 {t('retry')}
               </button>
@@ -210,20 +215,24 @@ export default function ChatSidebar({
                   setActiveChatId(chat._id);
                   setIsOpen(false);
                 }}
-                className={`p-3 rounded-lg mb-2 cursor-pointer group relative
-                  ${activeChatId === chat._id ? 'bg-green-300' : 'bg-white'}
-                  hover:bg-green-50`}
+                className={`p-3 rounded-xl mb-1.5 cursor-pointer group relative border transition-colors
+                  ${activeChatId === chat._id
+                    ? 'bg-emerald-600 border-emerald-600 text-white'
+                    : 'bg-white border-gray-100 hover:bg-emerald-50 text-gray-800'}`}
               >
-                <div className="pr-6 text-sm truncate">
+                <div className={`pr-6 text-sm font-medium truncate ${
+                  activeChatId === chat._id ? 'text-white' : ''
+                }`}>
                   {chat.title || `${t('chat')} ${chat._id.slice(-4)}`}
                 </div>
 
                 <button
                   onClick={e => handleDeleteChat(chat._id, e)}
                   disabled={deletingId !== null}
-                  className="absolute right-2 top-1/2 -translate-y-1/2
-                    opacity-0 group-hover:opacity-100 text-red-500
-                    disabled:opacity-0 disabled:cursor-not-allowed"
+                  className={`absolute right-2 top-1/2 -translate-y-1/2
+                    opacity-0 group-hover:opacity-100 transition-opacity
+                    disabled:opacity-0 disabled:cursor-not-allowed
+                    ${activeChatId === chat._id ? 'text-emerald-100 hover:text-white' : 'text-red-500'}`}
                   aria-label={t('deleteChat')}
                   title={t('deleteChat')}
                 >
@@ -241,10 +250,10 @@ export default function ChatSidebar({
         <button
           onClick={handleClearAllChats}
           disabled={chats.length === 0 || isClearing}
-          className={`py-2 rounded-lg font-medium
+          className={`py-2.5 rounded-xl font-medium transition-colors
             ${
               chats.length === 0
-                ? 'bg-gray-400 text-gray-200'
+                ? 'bg-gray-200 text-gray-400'
                 : 'bg-red-600 text-white hover:bg-red-700'
             } disabled:cursor-not-allowed`}
         >
