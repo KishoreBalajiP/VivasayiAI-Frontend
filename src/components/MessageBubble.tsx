@@ -1,6 +1,6 @@
 import { Message } from '../types';
-import { Volume2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { DiagnosisCard } from './DiagnosisCard';
 
 interface MessageBubbleProps {
   message: Message;
@@ -16,13 +16,6 @@ export const MessageBubble = ({ message }: MessageBubbleProps) => {
       ? message.timestamp
       : new Date(message.timestamp);
 
-  const playAudio = () => {
-    if (message.audioUrl) {
-      const audio = new Audio(message.audioUrl);
-      audio.play();
-    }
-  };
-
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
@@ -32,32 +25,28 @@ export const MessageBubble = ({ message }: MessageBubbleProps) => {
             : 'bg-white text-gray-800 border-2 border-gray-200'
         }`}
       >
-        {/* 🔹 FRONTEND IMAGE PREVIEW (before backend) */}
+        {/* FRONTEND IMAGE PREVIEW (before backend process) */}
         {message.image?.previewUrl && (
           <img
             src={message.image.previewUrl}
-            alt="Uploaded"
+            alt={t('uploadedImage')}
             className="rounded-xl sm:rounded-2xl mb-2 sm:mb-3 max-w-full h-auto"
           />
         )}
 
-        {/* 🔹 BACKEND IMAGE (future support) */}
-        {!message.image?.previewUrl && message.imageUrl && (
-          <img
-            src={message.imageUrl}
-            alt="Uploaded"
-            className="rounded-xl sm:rounded-2xl mb-2 sm:mb-3 max-w-full h-auto"
-          />
-        )}
-
-        {/* 🔹 TEXT (optional) */}
+        {/* TEXT (optional) */}
         {message.text && (
           <p className="text-base sm:text-lg leading-relaxed whitespace-pre-wrap">
             {message.text}
           </p>
         )}
 
-        {/* 🔹 TIMESTAMP + AUDIO */}
+        {/* BACKEND IMAGE DIAGNOSIS (image-turn assistant response) */}
+        {!isUser && message.diagnosis && (
+          <DiagnosisCard diagnosis={message.diagnosis} />
+        )}
+
+        {/* TIMESTAMP */}
         <div
           className={`flex items-center gap-2 mt-1 sm:mt-2 text-xs sm:text-sm ${
             isUser ? 'text-green-100' : 'text-gray-500'
@@ -69,16 +58,6 @@ export const MessageBubble = ({ message }: MessageBubbleProps) => {
               minute: '2-digit',
             })}
           </span>
-
-          {message.audioUrl && (
-            <button
-              onClick={playAudio}
-              className="ml-1 sm:ml-2 p-1 sm:p-2 hover:bg-opacity-20 hover:bg-black rounded-full transition-colors"
-              title={t('playAudio')}
-            >
-              <Volume2 className="w-4 h-4 sm:w-5 sm:h-5" />
-            </button>
-          )}
         </div>
       </div>
     </div>

@@ -1,15 +1,31 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { User, Language } from '../types';
+import { createContext, useContext, useState, useEffect, useRef, ReactNode, useCallback } from 'react';
+import { BackendAuthResponse, BackendUser, Language } from '../types';
 import { config } from '../config';
+import {
+  clearAuthState,
+  getAccessToken,
+  registerUnauthorizedHandler,
+  request,
+  setAccessToken,
+} from '../api/client';
+import i18n from '../i18n';
+
+const USER_KEY = `${config.auth.storageKeyPrefix}:user`;
+const OAUTH_STATE_KEY = `${config.auth.storageKeyPrefix}:oauthState`;
+
+// Fallback for browsers/environments where sessionStorage is blocked (e.g. privacy modes):
+// the OAuth state still survives within the SPA lifetime so login keeps working.
+let inMemoryOAuthState: string | null = null;
 
 interface AuthContextType {
-  user: User | null;
+  user: BackendUser | null;
   language: Language;
   setLanguage: (lang: Language) => void;
-  login: () => void;
+  login: () => Promise<void>;
   logout: () => void;
   isLoading: boolean;
-  updateUserLanguage: (lang: Language) => Promise<void>;
+  isAuthenticating: boolean;
+  authError: string | null;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -26,134 +42,246 @@ interface AuthProviderProps {
   children: ReactNode;
 }
 
+const generateOAuthState = (): string => {
+  const bytes = new Uint8Array(16);
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i += 1) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+};
+
+// The backend access token is a short-lived JWT. We cannot verify its signature in the
+// browser, but we can read `exp` to skip a doomed API call after expiry (a 401 then takes
+// over as the authoritative path back to login).
+const isBackendTokenExpired = (token: string): boolean => {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return typeof payload.exp === 'number' && Date.now() >= payload.exp * 1000;
+  } catch {
+    return true;
+  }
+};
+
+const readStored = (key: string): string | null => {
+  try {
+    return sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+const writeStored = (key: string, value: string): void => {
+  try {
+    sessionStorage.setItem(key, value);
+  } catch {
+    // storage unavailable — state stays in memory for this page only
+  }
+};
+
+const removeStored = (key: string): void => {
+  try {
+    sessionStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+};
+
 export const AuthProvider = ({ children }: AuthProviderProps) => {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<BackendUser | null>(null);
   const [language, setLanguageState] = useState<Language>('en');
   const [isLoading, setIsLoading] = useState(true);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const storedUser = localStorage.getItem('user');
-    const storedLang = localStorage.getItem('language') as Language;
-    const token = localStorage.getItem('id_token');
+  // Guards the OAuth callback against the dev-mode StrictMode double effect (and any future
+  // remount): the second run must not treat the in-flight callback as "handled, then failed".
+  const oauthHandledRef = useRef(false);
 
-    if (storedUser && token) {
-      setUser(JSON.parse(storedUser));
-    }
-    
-    // ✅ FIX: Properly validate and set language from localStorage
-    if (storedLang && (storedLang === 'en' || storedLang === 'ta')) {
-      setLanguageState(storedLang);
-    } else {
-      // Default to English if no valid language is stored
-      setLanguageState('en');
-      localStorage.setItem('language', 'en');
-    }
-
-    const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get('code');
-
-    if (code) {
-      handleCallback(code);
-    } else {
-      setIsLoading(false);
-    }
+  const clearSession = useCallback(() => {
+    setAccessToken(null);
+    removeStored(USER_KEY);
+    setUser(null);
+    setAuthError(null);
   }, []);
 
-  // ✅ FIX: Sync i18n with language changes
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      // Import i18n and change language when language state changes
-      import('../i18n').then(({ default: i18n }) => {
-        if (i18n.language !== language) {
-          i18n.changeLanguage(language);
-        }
-      });
-    }
-  }, [language]);
+  // OAuth callback: the backend owns the Cognito client and performs the token exchange
+  // (POST /auth/google). The browser must NEVER talk to Cognito's token endpoint directly.
+  const handleOAuthCallback = async (code: string, state: string | null) => {
+    setAuthError(null);
+    setIsAuthenticating(true);
 
-  const handleCallback = async (code: string) => {
+    const expectedState = readStored(OAUTH_STATE_KEY) ?? inMemoryOAuthState;
+    inMemoryOAuthState = null;
+    removeStored(OAUTH_STATE_KEY);
+
     try {
-      // Exchange authorization code for tokens directly with Cognito
-      const body = new URLSearchParams();
-      body.append('grant_type', 'authorization_code');
-      body.append('client_id', config.cognito.clientId);
-      body.append('code', code);
-      body.append('redirect_uri', config.cognito.redirectUri);
+      if (!code || !expectedState || !state || state !== expectedState) {
+        removeStored(USER_KEY);
+        setAccessToken(null);
+        setUser(null);
+        setAuthError('authInvalidCallback');
+        return;
+      }
 
-      const response = await fetch(`https://${config.cognito.domain}/oauth2/token`, {
+      clearAuthState();
+
+      const envelope = await request<BackendAuthResponse>('/auth/google', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: body.toString()
+        body: { code },
       });
 
-      const data = await response.json();
-
-      if (data.id_token) {
-        // Decode JWT to get user info (basic)
-        const payload = JSON.parse(atob(data.id_token.split('.')[1]));
-        const user: User = {
-          name: payload.name || payload.email,
-          email: payload.email
-        };
-
-        localStorage.setItem('user', JSON.stringify(user));
-        localStorage.setItem('id_token', data.id_token);
-        setUser(user);
-
-        // Clean URL
-        window.history.replaceState({}, document.title, window.location.pathname);
+      const result = envelope.data;
+      if (!result?.accessToken || !result?.user?.email) {
+        removeStored(USER_KEY);
+        setAccessToken(null);
+        setAuthError('loginFailed');
+        return;
       }
-    } catch (error) {
-      console.error('Auth error:', error);
+
+      setAccessToken(result.accessToken);
+      writeStored(USER_KEY, JSON.stringify(result.user));
+      setUser(result.user);
+    } catch {
+      // Full reset: the token and any stored user from a previous session must not survive
+      // a failed exchange, otherwise the app would look logged-in against a dead token.
+      removeStored(USER_KEY);
+      clearAuthState();
+      setAccessToken(null);
+      setUser(null);
+      setAuthError('loginFailed');
     } finally {
+      // Remove the temporary OAuth params from the URL (never leave the code/state visible).
+      window.history.replaceState({}, document.title, window.location.pathname);
+      setIsAuthenticating(false);
       setIsLoading(false);
     }
   };
 
-  const login = () => {
-    const authUrl = `https://${config.cognito.domain}/oauth2/authorize?` +
-      `client_id=${config.cognito.clientId}&` +
-      `response_type=code&` +
-      `scope=openid+email+profile&` +
-      `redirect_uri=${encodeURIComponent(config.cognito.redirectUri)}`;
-
-    window.location.href = authUrl;
-  };
-
-  const logout = () => {
-    localStorage.removeItem('user');
-    localStorage.removeItem('id_token');
-    // ✅ FIX: Don't remove language on logout - keep user preference
-    // localStorage.removeItem('language');
-    setUser(null);
-    // ✅ FIX: Don't reset language to English on logout
-    // setLanguageState('en');
-  };
-
-  const setLanguage = (lang: Language) => {
-    setLanguageState(lang);
-    localStorage.setItem('language', lang);
-    
-    // ✅ FIX: Also update i18n immediately
-    import('../i18n').then(({ default: i18n }) => {
-      i18n.changeLanguage(lang);
+  useEffect(() => {
+    // Any API-layer 401 clears the invalid session and routes back to login (no refresh
+    // endpoint exists yet, so no auto-recovery loop is attempted).
+    registerUnauthorizedHandler(() => {
+      clearSession();
+      setAuthError('authExpired');
     });
-  };
 
-  const updateUserLanguage = async (lang: Language) => {
-    setLanguage(lang);
-  };
+    // Clean up legacy auth remnants from the previous direct-Cognito flow.
+    try {
+      localStorage.removeItem('user');
+      localStorage.removeItem('id_token');
+    } catch {
+      // ignore
+    }
+
+    let storedLanguage: string | null = null;
+    try {
+      storedLanguage = localStorage.getItem('language');
+    } catch {
+      // default to English below
+    }
+    if (storedLanguage === 'en' || storedLanguage === 'ta') {
+      setLanguageState(storedLanguage);
+    } else {
+      try {
+        localStorage.setItem('language', 'en');
+      } catch {
+        // ignore
+      }
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+
+    if (code) {
+      // Dev StrictMode double-mounts this effect; without the guard the second run would
+      // clear the SPA's oauth state and race the in-flight callback with an empty `state`.
+      if (oauthHandledRef.current) return;
+      oauthHandledRef.current = true;
+      void handleOAuthCallback(code, params.get('state'));
+      return;
+    }
+
+    const token = getAccessToken();
+    const storedUser = readStored(USER_KEY);
+    if (token && storedUser) {
+      try {
+        const parsedUser = JSON.parse(storedUser) as BackendUser;
+        if (!isBackendTokenExpired(token) && parsedUser && parsedUser.email) {
+          setUser(parsedUser);
+        } else {
+          clearSession();
+        }
+      } catch {
+        clearSession();
+      }
+    } else {
+      clearSession();
+    }
+
+    setIsLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const login = useCallback(async () => {
+    setAuthError(null);
+
+    if (!config.cognito.domain || !config.cognito.clientId || !config.cognito.redirectUri) {
+      setAuthError('authMisconfigured');
+      return;
+    }
+
+    // `state` guards the callback against login CSRF. PKCE is intentionally NOT added here:
+    // the backend's Cognito token exchange (services/auth.service.js) does not forward a
+    // code_verifier, so a PKCE authorize request would be rejected at the token endpoint
+    // until the backend adds verifier support (see Phase 1 report — follow-up item).
+    const state = generateOAuthState();
+    writeStored(OAUTH_STATE_KEY, state);
+    inMemoryOAuthState = state;
+
+    const params = new URLSearchParams({
+      client_id: config.cognito.clientId,
+      response_type: 'code',
+      scope: 'openid email profile',
+      redirect_uri: config.cognito.redirectUri,
+      state,
+    });
+
+    window.location.assign(
+      `https://${config.cognito.domain}/oauth2/authorize?${params.toString()}`
+    );
+  }, []);
+
+  const logout = useCallback(() => {
+    clearSession();
+  }, [clearSession]);
+
+  const setLanguage = useCallback((lang: Language) => {
+    setLanguageState(lang);
+    try {
+      localStorage.setItem('language', lang);
+    } catch {
+      // ignore
+    }
+    i18n.changeLanguage(lang);
+  }, []);
 
   return (
-    <AuthContext.Provider value={{
-      user,
-      language,
-      setLanguage,
-      login,
-      logout,
-      isLoading,
-      updateUserLanguage
-    }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        language,
+        setLanguage,
+        login,
+        logout,
+        isLoading,
+        isAuthenticating,
+        authError,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
