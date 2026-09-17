@@ -11,7 +11,7 @@ vi.mock('../config', () => ({
   },
 }));
 
-import { runImageTurn, uploadImage } from '../api';
+import { runImageTurn, sendChatMessage, uploadImage } from '../api';
 import { ApiClientError } from '../api/client';
 import type { UploadResult } from '../types';
 
@@ -227,6 +227,101 @@ describe('runImageTurn — E3 upload→chat sequencing', () => {
 
     expect(turn).toEqual({ ok: false, failure: { phase: 'upload', status: 400 } });
     expect(log).toHaveLength(0);
+  });
+});
+
+describe('runImageTurn — image-only message fallback', () => {
+  it('image-only (empty text) sends the localized en instruction as the /chat message with the uploadId', async () => {
+    installFetch(makeHandler());
+
+    const turn = await runImageTurn({
+      file: imageFile(JPEG_BYTES, 'leaf.jpg', 'image/jpeg'),
+      message: '',
+      language: 'en',
+      fallbackMessage: 'Please analyze this image of my crop and advise me.',
+    });
+
+    expect(turn).toEqual({ ok: true, data: expect.objectContaining({ chatId: 'chat_9' }) });
+    const chat = chatCalls();
+    expect(chat).toHaveLength(1);
+    expect(chat[0].body).toEqual({
+      message: 'Please analyze this image of my crop and advise me.',
+      language: 'en',
+      uploadId: 'up_x',
+    });
+  });
+
+  it('image-only (empty text) localizes the fallback instruction to ta and keeps the uploadId', async () => {
+    installFetch(makeHandler());
+    const taInstruction = 'என் பயிரின் இந்தப் படத்தைப் பகுப்பாய்வு செய்து எனக்கு ஆலோசனை வழங்குங்கள்.';
+
+    const turn = await runImageTurn({
+      file: imageFile(JPEG_BYTES, 'ilai.jpg', 'image/jpeg'),
+      message: '',
+      language: 'ta',
+      fallbackMessage: taInstruction,
+    });
+
+    expect(turn.ok).toBe(true);
+    expect(chatCalls()[0].body).toMatchObject({
+      message: taInstruction,
+      language: 'ta',
+      uploadId: 'up_x',
+    });
+  });
+
+  it('image-only with whitespace-only text (no user message) also resolves to the fallback instruction', async () => {
+    installFetch(makeHandler());
+
+    const turn = await runImageTurn({
+      file: imageFile(JPEG_BYTES, 'leaf.jpg', 'image/jpeg'),
+      message: '   ',
+      language: 'en',
+      fallbackMessage: 'Please analyze this image of my crop and advise me.',
+    });
+
+    expect(turn.ok).toBe(true);
+    expect(chatCalls()[0].body).toMatchObject({ message: 'Please analyze this image of my crop and advise me.' });
+  });
+
+  it('text + image preserves the user\'s exact typed message (fallback ignored)', async () => {
+    installFetch(makeHandler());
+    const typed = 'என் பயிர் மஞ்சள் நிறமாக உள்ளது';
+
+    const turn = await runImageTurn({
+      file: imageFile(JPEG_BYTES, 'ilai.jpg', 'image/jpeg'),
+      message: typed,
+      language: 'ta',
+      fallbackMessage: 'ignored fallback',
+    });
+
+    expect(turn.ok).toBe(true);
+    expect(chatCalls()[0].body).toMatchObject({ message: typed, language: 'ta', uploadId: 'up_x' });
+  });
+
+  it('refuses an image turn with neither a message nor a fallback before any network call', async () => {
+    installFetch(makeHandler());
+
+    const turn = await runImageTurn({
+      file: imageFile(JPEG_BYTES, 'leaf.jpg', 'image/jpeg'),
+      message: '',
+      language: 'en',
+    });
+
+    expect(turn).toEqual({ ok: false, failure: { phase: 'chat', status: 400 } });
+    expect(log).toHaveLength(0);
+  });
+});
+
+describe('sendChatMessage — text-only contract', () => {
+  it('text-only sends the user message without an uploadId (existing behavior)', async () => {
+    installFetch(makeHandler());
+
+    await sendChatMessage('hello, how is my paddy?', 'en', null);
+
+    const chat = chatCalls();
+    expect(chat).toHaveLength(1);
+    expect(chat[0].body).toEqual({ message: 'hello, how is my paddy?', language: 'en' });
   });
 });
 
