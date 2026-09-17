@@ -9,6 +9,9 @@ export interface User {
 export interface ImageAttachment {
   previewUrl: string;
   file: File;
+  // Client-detected format (sniffed from the file's magic bytes) so the preview chip can show
+  // an honest "JPEG · 240 KB" label even when the browser reports no/odd MIME type.
+  detectedType?: 'jpeg' | 'png' | 'webp';
 }
 
 export interface Message {

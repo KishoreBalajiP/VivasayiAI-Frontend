@@ -83,6 +83,55 @@ export interface PositionResult {
   lon: number;
 }
 
+// ── Richer location model (PREMIUM LOCATION PASS) ────────────────────────────────────────
+// The device coordinates are kept as the source of truth. District resolution is preserved
+// for the existing backend /weather contract and the 38-district authoritative list, while a
+// SEPARATE set of nullable fields carries the finest reverse-geocoded details the public
+// geocoder actually returns (village/locality/town/taluk). Nothing is fabricated: a field is
+// null when the provider did not return it, and `district` is set ONLY inside Tamil Nadu.
+
+export interface LocationDetails {
+  // Best human-readable representation (built by buildDisplayName from actual fields).
+  displayName: string | null;
+  // neighbourhood / suburb / quarter
+  locality: string | null;
+  // village / hamlet
+  village: string | null;
+  // town / city
+  townCity: string | null;
+  // taluk / sub-district / county where the geocoder provides one
+  subDistrict: string | null;
+  // Canonical TN-district for the weather contract when inside TN; otherwise the geocoder's
+  // district or null. NEVER a fabricated TN district for out-of-TN coordinates.
+  district: string | null;
+  state: string | null;
+  country: string | null;
+  // Which provider supplied the finer fields: 'nominatim' | 'districts' | null.
+  source: 'nominatim' | 'districts' | null;
+  lat: number;
+  lon: number;
+}
+
+// Build the most useful human-readable place label from ACTUAL returned fields, using the
+// precedence the product spec defines: village → locality → town/city → district → state.
+export const buildDisplayName = (
+  fields: Pick<
+    LocationDetails,
+    'locality' | 'village' | 'townCity' | 'district' | 'state' | 'country'
+  >
+): string | null => {
+  const primary = fields.village || fields.locality || fields.townCity;
+  const parts: string[] = [];
+  if (primary) parts.push(primary);
+  if (fields.district) {
+    parts.push(fields.district);
+  } else {
+    if (fields.state) parts.push(fields.state);
+    if (fields.country && parts.length === 0) parts.push(fields.country);
+  }
+  return parts.length > 0 ? parts.join(', ') : null;
+};
+
 export const getBrowserPosition = (): Promise<
   | { ok: true; position: PositionResult }
   | { ok: false; error: LocationErrorKey }

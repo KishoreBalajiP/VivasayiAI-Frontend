@@ -15,11 +15,7 @@ import { MessageBubble } from './MessageBubble';
 import { sendChatMessage, getChatSession, uploadImage } from '../api';
 import { ApiClientError, friendlyMessageKey } from '../api/client';
 import VoiceRecorder from './VoiceRecorder';
-
-// Frontend UX guard — the backend remains authoritative. Values mirror the backend: the
-// approved formats (utils/imageFormat.js) and the default 5MB upload cap (IMAGE_UPLOAD_MAX_BYTES).
-const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+import { validateImageFile } from '../utils/imageValidation';
 
 interface Props {
   activeChatId: string | null;
@@ -28,6 +24,10 @@ interface Props {
   // (the sidebar should refresh its list only then).
   onMessageSent?: (createdNew: boolean) => void;
   onOpenSidebar?: () => void;
+  // Deletes the CURRENT session (whole-chat deletion is the only backend-supported delete).
+  // Used by the message contextual-menu dialog: single-message deletion is not available in
+  // the backend API, so the dialog offers this supported action instead.
+  onDeleteChat?: () => Promise<void> | void;
 }
 
 // Backend messages carry no id and use ISO timestamps; the UI model needs a stable React
@@ -48,10 +48,12 @@ export const ChatInterface = ({
   setActiveChatId,
   onMessageSent,
   onOpenSidebar,
+  onDeleteChat,
 }: Props) => {
   const { t } = useTranslation();
   const { user, language } = useAuth();
-  const { district: locationDistrict, status: locStatus } = useLocation();
+  const { status: locStatus, details } = useLocation();
+  const placeName = details?.displayName ?? null;
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -60,6 +62,8 @@ export const ChatInterface = ({
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [attachError, setAttachError] = useState<string | null>(null);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [isDeletingChat, setIsDeletingChat] = useState(false);
   // Real send stages backing the loader copy: upload → analyze (image only) → processing.
   const [sendStage, setSendStage] = useState<'idle' | 'uploading' | 'analyzing' | 'processing'>('idle');
 
@@ -158,22 +162,29 @@ export const ChatInterface = ({
     setAttachError(null);
   };
 
-  const handleFileSelect = (e: ChangeEvent<HTMLInputElement>) => {
+  // Honest, backend-mirroring client-side guard. Browser `file.type` alone is unreliable
+  // (empty MIME on valid uploads, misleading MIME on renamed files) — we sniff the same
+  // magic-byte signatures as the backend (JPEG/PNG/WebP) and the same 5 MB cap.
+  const handleFileSelect = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = ''; // allow re-selecting the same file for a new turn
     if (!file) return;
-    // Frontend UX guard only — the backend's magic-byte + size validation stays authoritative.
-    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+    try {
+      const { type } = await validateImageFile(file);
+      if (selectedImage) URL.revokeObjectURL(selectedImage.previewUrl);
+      setAttachError(null);
+      setSelectedImage({
+        file,
+        previewUrl: URL.createObjectURL(file),
+        detectedType: type,
+      });
+    } catch (err) {
+      if (err && typeof err === 'object' && 'key' in err && err.key) {
+        setAttachError(err.key as 'imageTooLarge' | 'unsupportedImage');
+        return;
+      }
       setAttachError('unsupportedImage');
-      return;
     }
-    if (file.size > MAX_IMAGE_BYTES) {
-      setAttachError('imageTooLarge');
-      return;
-    }
-    if (selectedImage) URL.revokeObjectURL(selectedImage.previewUrl);
-    setAttachError(null);
-    setSelectedImage({ file, previewUrl: URL.createObjectURL(file) });
   };
 
   const handleSend = async () => {
@@ -285,6 +296,19 @@ export const ChatInterface = ({
     }
   };
 
+  // Whole-chat deletion (the only delete the backend supports). Also closes the dialog on
+  // success — the parent resets activeChatId, which clears this component's history.
+  const handleDeleteChat = async (): Promise<void> => {
+    if (isDeletingChat) return;
+    setIsDeletingChat(true);
+    try {
+      await onDeleteChat?.();
+    } finally {
+      setIsDeletingChat(false);
+      setShowDeleteDialog(false);
+    }
+  };
+
   // Time-of-day greeting (premium entry into the assistant).
   const displayName =
     user?.name?.trim() || user?.email?.split('@')[0]?.trim() || 'Vivasayi';
@@ -320,7 +344,11 @@ export const ChatInterface = ({
       <main className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl space-y-3 px-3 py-4 sm:px-4">
           {messages.map((m, i) => (
-            <MessageBubble key={`${m.id}-${i}`} message={m} />
+            <MessageBubble
+              key={`${m.id}-${i}`}
+              message={m}
+              onRequestDelete={activeChatId ? () => setShowDeleteDialog(true) : undefined}
+            />
           ))}
 
           {messages.length === 0 && !isLoadingHistory && !isProcessing && !historyError && (
@@ -336,10 +364,15 @@ export const ChatInterface = ({
                 {t('askVivasayi')}
               </p>
 
-              {locationDistrict && locStatus === 'granted' && (
-                <div className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800">
-                  <MapPin className="h-3.5 w-3.5" />
-                  {t('locationYourDistrict', { district: locationDistrict })}
+              {placeName && locStatus === 'granted' && (
+                <div
+                  title={t('placeContext', { place: placeName })}
+                  className="mt-3 inline-flex max-w-full items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800"
+                >
+                  <MapPin className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">
+                    {t('placeContext', { place: placeName })}
+                  </span>
                 </div>
               )}
 
@@ -394,7 +427,7 @@ export const ChatInterface = ({
       </main>
 
       {/* COMPOSER (premium single bar) */}
-      <footer className="shrink-0 border-t border-gray-200 bg-white px-3 py-2.5 sm:px-4 sm:py-3">
+      <footer className="shrink-0 border-t border-gray-200 bg-white px-3 pb-[max(0.625rem,env(safe-area-inset-bottom))] pt-2.5 sm:px-4 sm:py-3">
         <div className="mx-auto max-w-3xl">
           {attachError && (
             <p
@@ -406,21 +439,33 @@ export const ChatInterface = ({
           )}
 
           {selectedImage && (
-            <div className="mb-2 relative w-fit max-w-full">
-              <img
-                src={selectedImage.previewUrl}
-                alt={t('attachImage')}
-                className="max-h-36 max-w-[140px] rounded-xl border object-cover shadow-sm"
-              />
-              <button
-                onClick={removeImage}
-                disabled={isProcessing}
-                aria-label={t('removeImage')}
-                title={t('removeImage')}
-                className="absolute -top-2 -right-2 flex h-6 w-6 items-center justify-center rounded-full bg-gray-900 text-sm text-white shadow hover:bg-red-600 disabled:opacity-50"
-              >
-                <span className="leading-none">×</span>
-              </button>
+            <div className="mb-2 flex items-end gap-2">
+              <div className="relative w-fit max-w-full">
+                <img
+                  src={selectedImage.previewUrl}
+                  alt={t('attachImage')}
+                  className="max-h-36 max-w-[140px] rounded-xl border object-cover shadow-sm"
+                />
+                <button
+                  onClick={removeImage}
+                  disabled={isProcessing}
+                  aria-label={t('removeImage')}
+                  title={t('removeImage')}
+                  className="absolute -top-2 -right-2 flex h-6 w-6 items-center justify-center rounded-full bg-gray-900 text-sm text-white shadow hover:bg-red-600 disabled:opacity-50"
+                >
+                  <span className="leading-none">×</span>
+                </button>
+              </div>
+              <div className="flex shrink-0 flex-col gap-1 pb-1 text-[11px] text-gray-500">
+                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
+                  {selectedImage.detectedType ? selectedImage.detectedType.toUpperCase() : 'IMG'}
+                </span>
+                <span>
+                  {selectedImage.file.size >= 1024 * 1024
+                    ? `${(selectedImage.file.size / (1024 * 1024)).toFixed(1)} MB`
+                    : `${Math.max(1, Math.round(selectedImage.file.size / 1024))} KB`}
+                </span>
+              </div>
             </div>
           )}
 
@@ -470,6 +515,49 @@ export const ChatInterface = ({
           </div>
         </div>
       </footer>
+
+      {/* MESSAGE-DELETE DIALOG — honest capability note. The backend has no single-message
+          deletion (messages carry no ids), so the dialog explains that and routes the user to
+          the supported whole-chat delete. Raw capabilities are never fabricated. */}
+      {showDeleteDialog && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => {
+            if (!isDeletingChat) setShowDeleteDialog(false);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-msg-title"
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-2xl border border-gray-100 bg-white p-5 shadow-2xl sm:p-6"
+          >
+            <h3 id="delete-msg-title" className="text-base font-bold text-gray-900 sm:text-lg">
+              {t('messageDeleteUnsupportedTitle')}
+            </h3>
+            <p className="mt-2 text-sm text-gray-600">{t('messageDeleteUnsupportedBody')}</p>
+
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                onClick={() => setShowDeleteDialog(false)}
+                disabled={isDeletingChat}
+                className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
+              >
+                {t('cancel')}
+              </button>
+              <button
+                onClick={() => void handleDeleteChat()}
+                disabled={isDeletingChat}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-red-700 disabled:opacity-60"
+              >
+                {isDeletingChat && <Loader2 className="h-4 w-4 animate-spin" />}
+                {t('deleteThisChat')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -30,6 +30,10 @@ export default function ChatSidebar({
   const [isCreating, setIsCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isClearing, setIsClearing] = useState(false);
+  // Inline confirmation target — destructive actions never fire on first click.
+  const [confirmTarget, setConfirmTarget] = useState<
+    { type: 'chat'; id: string } | { type: 'all' } | null
+  >(null);
   // Intentional list states: loading (first paint), and a separate list-fetch failure that
   // keeps the empty state from being mistaken for "no chats".
   const [isLoadingList, setIsLoadingList] = useState(true);
@@ -93,10 +97,16 @@ export default function ChatSidebar({
     }
   };
 
-  const handleDeleteChat = async (chatId: string, e: React.MouseEvent) => {
+  const handleDeleteChat = (chatId: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    // First click arms the inline confirmation; deletion only happens on "Yes, delete".
+    setConfirmTarget({ type: 'chat', id: chatId });
+  };
+
+  const doDeleteChat = async (chatId: string) => {
     if (deletingId) return;
     setDeletingId(chatId);
+    setConfirmTarget(null);
 
     try {
       await deleteChatSession(chatId);
@@ -117,10 +127,17 @@ export default function ChatSidebar({
     }
   };
 
-  const handleClearAllChats = async () => {
+  const handleClearAllChats = () => {
+    if (chats.length === 0) return;
+    // First click arms the inline confirmation; deletion only happens on "Yes, delete".
+    setConfirmTarget(prev => (prev && prev.type === 'all' ? null : { type: 'all' }));
+  };
+
+  const doClearAllChats = async () => {
     if (chats.length === 0) return;
     if (isClearing) return;
     setIsClearing(true);
+    setConfirmTarget(null);
 
     try {
       await clearAllChatSessions();
@@ -226,44 +243,96 @@ export default function ChatSidebar({
                   {chat.title || `${t('chat')} ${chat._id.slice(-4)}`}
                 </div>
 
-                <button
-                  onClick={e => handleDeleteChat(chat._id, e)}
-                  disabled={deletingId !== null}
-                  className={`absolute right-2 top-1/2 -translate-y-1/2
-                    opacity-0 group-hover:opacity-100 transition-opacity
-                    disabled:opacity-0 disabled:cursor-not-allowed
-                    ${activeChatId === chat._id ? 'text-emerald-100 hover:text-white' : 'text-red-500'}`}
-                  aria-label={t('deleteChat')}
-                  title={t('deleteChat')}
-                >
-                  {deletingId === chat._id ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
+                {confirmTarget?.type === 'chat' && confirmTarget.id === chat._id ? (
+                  <div
+                    onClick={e => e.stopPropagation()}
+                    className={`mt-1.5 flex flex-wrap items-center gap-1.5 text-xs ${
+                      activeChatId === chat._id ? 'text-emerald-100' : 'text-gray-600'
+                    }`}
+                  >
+                    <span>{t('confirmDeleteChat')}</span>
+                    <button
+                      onClick={() => void doDeleteChat(chat._id)}
+                      disabled={deletingId !== null}
+                      className={`rounded-full px-2.5 py-1 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                        activeChatId === chat._id
+                          ? 'bg-white text-red-700 hover:bg-red-50'
+                          : 'bg-red-600 text-white hover:bg-red-700'
+                      }`}
+                    >
+                      {deletingId === chat._id ? (
+                        <Loader2 className="h-3.5 w-3.5 inline-block animate-spin" />
+                      ) : (
+                        t('yesDelete')
+                      )}
+                    </button>
+                    <button
+                      onClick={() => setConfirmTarget(null)}
+                      className="rounded-full border border-gray-300 px-2.5 py-1 font-semibold transition-colors hover:bg-gray-50"
+                    >
+                      {t('cancel')}
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={e => handleDeleteChat(chat._id, e)}
+                    disabled={deletingId !== null}
+                    className={`absolute right-2 top-1/2 -translate-y-1/2
+                      opacity-0 group-hover:opacity-100 transition-opacity
+                      disabled:opacity-0 disabled:cursor-not-allowed
+                      ${activeChatId === chat._id ? 'text-emerald-100 hover:text-white' : 'text-red-500'}`}
+                    aria-label={t('deleteChat')}
+                    title={t('deleteChat')}
+                  >
                     <Trash2 className="w-4 h-4" />
-                  )}
-                </button>
+                  </button>
+                )}
               </div>
             ))
           )}
         </div>
 
-        <button
-          onClick={handleClearAllChats}
-          disabled={chats.length === 0 || isClearing}
-          className={`py-2.5 rounded-xl font-medium transition-colors
+        {confirmTarget?.type === 'all' ? (
+          <div className="rounded-xl border border-red-200 bg-red-50 p-2.5">
+            <p className="text-xs font-semibold text-red-800">{t('confirmClearAll')}</p>
+            <p className="mt-0.5 text-[11px] text-red-700">{t('confirmClearAllHint')}</p>
+            <div className="mt-2 flex items-center gap-1.5">
+              <button
+                onClick={() => void doClearAllChats()}
+                disabled={isClearing}
+                className="inline-flex items-center gap-1.5 rounded-full bg-red-600 px-3 py-1 text-xs font-semibold text-white transition-colors hover:bg-red-700 disabled:opacity-60"
+              >
+                {isClearing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {t('yesDelete')}
+              </button>
+              <button
+                onClick={() => setConfirmTarget(null)}
+                disabled={isClearing}
+                className="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
+              >
+                {t('cancel')}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={handleClearAllChats}
+            disabled={chats.length === 0 || isClearing}
+            className={`py-2.5 rounded-xl font-medium transition-colors
             ${
               chats.length === 0
                 ? 'bg-gray-200 text-gray-400'
                 : 'bg-red-600 text-white hover:bg-red-700'
             } disabled:cursor-not-allowed`}
-        >
-          {isClearing ? (
-            <Loader2 className="w-4 h-4 animate-spin inline-block align-[-2px]" />
-          ) : (
-            '🗑️'
-          )}{' '}
-          {t('clearAllChats')}
-        </button>
+          >
+            {isClearing ? (
+              <Loader2 className="w-4 h-4 animate-spin inline-block align-[-2px]" />
+            ) : (
+              '🗑️'
+            )}{' '}
+            {t('clearAllChats')}
+          </button>
+        )}
       </aside>
     </>
   );

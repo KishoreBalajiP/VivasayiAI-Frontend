@@ -19,8 +19,11 @@ export const WeatherPanel = ({ profile }: WeatherPanelProps) => {
   const {
     status: locStatus,
     district: detectedDistrict,
+    details,
     requestLocation,
   } = useLocation();
+
+  const placeName = details?.displayName ?? null;
 
   const [weather, setWeather] = useState<WeatherResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -81,11 +84,21 @@ export const WeatherPanel = ({ profile }: WeatherPanelProps) => {
     const isGranted = locStatus === 'granted' && detectedDistrict;
 
     if (isGranted) {
+      const title =
+        details && details.lat !== undefined && details.lon !== undefined
+          ? `${t('detectedLocation')}: ${placeName ?? detectedDistrict} · ${t('coordsTitle', {
+              lat: details.lat.toFixed(4),
+              lon: details.lon.toFixed(4),
+            })}`
+          : `${t('detectedLocation')}: ${placeName ?? detectedDistrict}`;
       return (
-        <div className="flex items-center gap-1.5 text-sm font-semibold text-emerald-800">
-          <MapPin className="h-4 w-4 text-emerald-700" />
-          <span>{t('detectedLocation')}:</span>
-          <span>{detectedDistrict}</span>
+        <div
+          title={title}
+          className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-emerald-800"
+        >
+          <MapPin className="h-4 w-4 shrink-0 text-emerald-700" />
+          <span className="shrink-0">{t('detectedLocation')}:</span>
+          <span className="min-w-0 break-words">{placeName ?? detectedDistrict}</span>
         </div>
       );
     }

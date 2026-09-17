@@ -20,4 +20,26 @@
   textarea {
     font-size: 16px;
   }
+
+  /* Respect iOS home-indicator safe area in the composer (class is set with max() in Tailwind) */
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* Smooth momentum scrolling on iOS chat bodies */
+  .overflow-y-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Softer tap highlight, matching the design language */
+  button,
+  a {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Thin, neutral scrollbars for the emerald theme */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(167 243 208) transparent;
+  }
 }
