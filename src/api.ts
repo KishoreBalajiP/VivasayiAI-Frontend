@@ -1,4 +1,5 @@
-import { request } from './api/client';
+import { ApiClientError, friendlyMessageKey, request } from './api/client';
+import { detectImageType } from './utils/imageValidation';
 import type {
   ChatSessionRecord,
   FarmProfile,
@@ -54,18 +55,78 @@ export const sendChatMessage = async (
   return envelope.data;
 };
 
-// ── POST /upload ─────────────────────────────────────────────────────────────────────────
-// Multipart image upload (E3). The centralized client attaches the Bearer token and sends
-// FormData as-is so the browser sets the multipart boundary — Content-Type is NEVER set
-// manually. `image` is the exact multipart field the backend expects (multer.single).
-// The backend validates size (≤5 MB), magic bytes and MIME, normalizes and stores the
-// image, and returns a metadata-only response (no S3 keys/URLs are ever returned).
+// ── POST /upload/presign → direct S3 PUT → POST /upload/:uploadId/complete ─────────────
+// Presigned-S3 upload transport (E3). The image is NEVER proxied through the API: the
+// backend returns a short-lived PUT URL bound to a server-owned private-S3 key, the browser
+// uploads the bytes straight to S3 (no Authorization header — the URL itself is the
+// credential), and the complete step re-validates the stored object and links the record
+// to the uploadId used by /chat. The backend stays authoritative for magic bytes, MIME and
+// size; the browser never receives S3 keys or credentials (only the presigned URL).
 
+// Exact content types the backend accepts (utils/validation.schemas.js presignUploadBody).
+const TYPE_TO_CONTENT_TYPE: Record<'jpeg' | 'png' | 'webp', string> = {
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+};
+
+// Direct S3 PUTs need generous time on slow uplinks (no app timeout semantics apply).
+const DIRECT_PUT_TIMEOUT_MS = 120000;
+
+export interface PresignedUpload {
+  uploadId: string;
+  uploadUrl: string;
+  expiresIn: number;
+}
+
+// Sends the raw bytes with the EXACT Content-Type the backend declared at presign time,
+// so the complete step's S3 object metadata matches. The presigned URL is itself the
+// credential — the Bearer token must NOT be attached (S3 rejects it; it is app-only).
+const putFileToPresignedUrl = async (
+  uploadUrl: string,
+  file: File,
+  contentType: string
+): Promise<void> => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), DIRECT_PUT_TIMEOUT_MS);
+  try {
+    const res = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': contentType },
+      body: file,
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new ApiClientError(res.status, friendlyMessageKey(res.status));
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError(0, friendlyMessageKey(0));
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
+// 1) request a presign (declared size/MIME, server-owned key) → 2) PUT the bytes directly
+// to private S3 via the returned URL → 3) complete, which re-verifies and settles the
+// record. Returns the same UploadResult the backend produced before. A 400/413 from any
+// step surfaces as ApiClientError so the composer maps it to the friendly image errors.
 export const uploadImage = async (file: File): Promise<UploadResult> => {
-  const form = new FormData();
-  form.append('image', file);
-  const envelope = await request<UploadResult>('/upload', { method: 'POST', body: form });
-  return envelope.data;
+  const bytes = new Uint8Array(await file.slice(0, 16).arrayBuffer());
+  const sniffed = detectImageType(bytes);
+  if (!sniffed) throw new ApiClientError(400, friendlyMessageKey(400));
+  const contentType = TYPE_TO_CONTENT_TYPE[sniffed];
+
+  const presign = await request<PresignedUpload>('/upload/presign', {
+    method: 'POST',
+    body: { contentType, size: file.size, filename: file.name },
+  });
+  const { uploadId, uploadUrl } = presign.data;
+
+  await putFileToPresignedUrl(uploadUrl, file, contentType);
+
+  const complete = await request<UploadResult>(`/upload/${uploadId}/complete`, {
+    method: 'POST',
+  });
+  return complete.data;
 };
 
 // ── /chatsessions ───────────────────────────────────────────────────────────────────────

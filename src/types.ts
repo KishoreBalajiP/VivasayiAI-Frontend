@@ -38,8 +38,9 @@ export interface ProcessedImageInfo {
   height: number;
 }
 
-// POST /upload → data: synchronously-validated, stored upload metadata. `status` is the
-// ImageRecord pipeline state ("stored" at response time; analysis happens later via /chat).
+// `uploadImage` (presigned transport) → data returned by POST /upload/:uploadId/complete:
+// synchronously-validated, stored upload metadata. `status` is the ImageRecord pipeline
+// state ("stored" at response time; analysis happens later via /chat).
 export interface UploadResult {
   uploadId: string;
   mediaType: string;
