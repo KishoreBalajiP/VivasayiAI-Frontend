@@ -1,15 +1,17 @@
 // Client-side image validation (PREMIUM IMAGE PASS).
 //
 // The backend is authoritative: it sniffs magic bytes (utils/imageFormat.js in the backend
-// repo) and accepts ONLY JPEG, PNG and WebP, capped at 5 MB. The frontend previously judged
-// files by `file.type` alone, which incorrectly rejected perfectly valid images whose MIME
-// was empty or vendor-specific (e.g. `image/webp` uploads from some Android file managers,
-// or files with no declared type). We now sniff the same three magic-byte signatures
-// client-side, so:
-//   - a valid WebP (or JPG/PNG) with an unknown/empty MIME is accepted;
-//   - a renamed non-image (e.g. a .txt renamed to .jpg) is rejected with an accurate error;
-//   - the error text always matches the backend-approved formats.
-// Size is capped at the same 5 MB as the backend (env IMAGE_UPLOAD_MAX_BYTES).
+// repo) and accepts ONLY JPEG, PNG and WebP, capped at 5 MB (env IMAGE_UPLOAD_MAX_BYTES).
+// The frontend previously judged files by `file.type` alone, which incorrectly rejected
+// perfectly valid images whose MIME was empty or vendor-specific (e.g. `image/webp` uploads
+// from some Android file managers, camera-exported files, or files with no declared type).
+//
+// This guard is deliberately permissive about MIME/extension: a file is accepted when the
+// magic bytes match a known image OR the browser/OS identifies it as an image (`image/*`).
+// The rejected-only-when-neither rule means valid camera/odd-MIME images are never blocked
+// here, while the backend stays the final judge of the actual bytes (a renamed PDF or a
+// corrupt file still fails its sniff + Sharp decode with a clean 400-level processing error).
+// Size is capped at the same 5 MB as the backend.
 
 export type ImageSniffErrorKey = 'imageTooLarge' | 'unsupportedImage';
 
@@ -42,20 +44,30 @@ export const detectImageType = (bytes: Uint8Array): 'jpeg' | 'png' | 'webp' | nu
   return null;
 };
 
-// Full UX guard: rejects oversized files with 'imageTooLarge' and non-approved content with
-// 'unsupportedImage'. Resolves with the detected format for the preview badge.
+// Full UX guard: rejects oversized files with 'imageTooLarge' and content that is neither a
+// sniffed JPEG/PNG/WebP nor browser-identified as an image with 'unsupportedImage'. Accepts
+// when EITHER signal says image (magic bytes OR `image/*` MIME) — the backend re-verifies the
+// real bytes. Resolves with the detected format for the preview badge (null when only the
+// browser's `image/*` MIME vouched for the file).
 export const validateImageFile = async (
   file: File
-): Promise<{ type: 'jpeg' | 'png' | 'webp' }> => {
+): Promise<{ type: 'jpeg' | 'png' | 'webp' | null }> => {
   if (file.size > MAX_IMAGE_BYTES) {
     throw { key: 'imageTooLarge' } satisfies FileValidationError;
   }
 
   const head = file.slice(0, 16);
   const bytes = new Uint8Array(await head.arrayBuffer());
-  const type = detectImageType(bytes);
-  if (!type) {
+  const detected = detectImageType(bytes);
+
+  // Browser/OS MIME is never the sole decider on its own (`file.type === 'image/*'` alone can
+  // be misleading on renamed files) but it is a legitimate acceptance signal for valid images
+  // the magic sniff cannot recognize (e.g. HEIC, TIFF) — those still get a clean backend
+  // 400-level processing error if unsupported, never a fake success. Reject only when neither
+  // the bytes nor the declared MIME indicate an image.
+  const browserSaysImage = (file.type || '').toLowerCase().startsWith('image/');
+  if (!detected && !browserSaysImage) {
     throw { key: 'unsupportedImage' } satisfies FileValidationError;
   }
-  return { type };
+  return { type: detected };
 };

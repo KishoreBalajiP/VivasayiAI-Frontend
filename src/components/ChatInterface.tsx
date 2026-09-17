@@ -12,7 +12,8 @@ import {
   MessageSquarePlus,
 } from 'lucide-react';
 import { MessageBubble } from './MessageBubble';
-import { sendChatMessage, getChatSession, uploadImage } from '../api';
+import { sendChatMessage, getChatSession, runImageTurn } from '../api';
+import type { ChatResult } from '../api';
 import { ApiClientError, friendlyMessageKey } from '../api/client';
 import VoiceRecorder from './VoiceRecorder';
 import { validateImageFile } from '../utils/imageValidation';
@@ -163,8 +164,10 @@ export const ChatInterface = ({
   };
 
   // Honest, backend-mirroring client-side guard. Browser `file.type` alone is unreliable
-  // (empty MIME on valid uploads, misleading MIME on renamed files) — we sniff the same
-  // magic-byte signatures as the backend (JPEG/PNG/WebP) and the same 5 MB cap.
+  // (empty MIME on valid uploads, misleading MIME on renamed files). We accept anything that
+  // either sniffs as JPEG/PNG/WebP OR the browser identifies as an image (`image/*`), under
+  // the same 5 MB cap — the backend re-verifies the real bytes and rejects non-images with a
+  // clear processing error, so no valid image is ever blocked here on MIME/extension alone.
   const handleFileSelect = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = ''; // allow re-selecting the same file for a new turn
@@ -216,19 +219,39 @@ export const ChatInterface = ({
     setIsProcessing(true);
     setSendStage(hasImage ? 'uploading' : 'processing');
 
-    let uploadDone = false;
     try {
-      // Sequence: upload first, then send the message with the returned uploadId. The image
-      // is never uploaded just by selecting it — this runs only on an intentional Send.
-      let uploadId: string | undefined;
+      let res: ChatResult;
       if (hasImage && selectedImage) {
-        uploadId = (await uploadImage(selectedImage.file)).uploadId;
-        uploadDone = true;
-        setSendStage('analyzing');
+        // E3 image turn: upload first (presign → S3 PUT → complete), then send the message
+        // with the returned uploadId. runImageTurn guarantees /chat is only reachable after
+        // a completed upload — a failed presign/PUT/complete never reaches it.
+        const turn = await runImageTurn({
+          file: selectedImage.file,
+          message: text,
+          language,
+          chatId: sessionIdAtSend,
+          onUploaded: () => setSendStage('analyzing'),
+        });
+        if (!turn.ok) {
+          // A failure belongs to the session it was sent in: if the component is gone or the
+          // user switched sessions, abandon the composer error instead of surfacing it in the
+          // new context. (finally below still releases the busy flags.) Keep the image + text
+          // in the composer so the user can retry. Friendly keys only — raw server errors,
+          // S3/Gemini details and stack traces are never shown.
+          if (!mountedRef.current || sessionIdAtSend !== activeChatIdRef.current) return;
+          const errKey =
+            turn.failure.status === 413
+              ? 'imageTooLarge'
+              : turn.failure.phase === 'upload'
+                ? 'imageUploadFailed' // presign/PUT/complete rejected — the image was not accepted
+                : friendlyMessageKey(turn.failure.status); // upload OK; the /chat turn itself failed
+          setAttachError(errKey);
+          return;
+        }
+        res = turn.data;
+      } else {
+        res = await sendChatMessage(text, language, sessionIdAtSend);
       }
-
-      // Owned by the authenticated token — no userEmail/cognitoSub/userId is sent.
-      const res = await sendChatMessage(text, language, sessionIdAtSend, uploadId);
 
       // The turn was accepted/completed. If the component unmounted or the user switched
       // sessions mid-flight, abandon ALL UI updates for this turn (the backend already
@@ -259,23 +282,15 @@ export const ChatInterface = ({
       ]);
 
       onMessageSent?.(createdNew);
-    } catch (error) {
-      // A failure belongs to the session it was sent in: if the component is gone or the
-      // user switched sessions, abandon the composer error instead of surfacing it in the
-      // new context. (finally below still releases the busy flags.)
+    } catch {
+      // Text-only failure behavior (image turns resolve through runImageTurn above and never
+      // reach this catch). A failure belongs to the session it was sent in: if the component
+      // is gone or the user switched sessions, abandon the composer error instead of
+      // surfacing it in the new context. (finally below still releases the busy flags.)
       if (!mountedRef.current || sessionIdAtSend !== activeChatIdRef.current) return;
       if (hasImage) {
-        // Keep the image + text in the composer so the user can retry. Friendly keys only —
-        // raw server errors, S3/Gemini details and stack traces are never shown.
-        const status = error instanceof ApiClientError ? error.status : 0;
-        const errKey =
-          status === 400
-            ? 'unsupportedImage'
-            : status === 413
-              ? 'imageTooLarge'
-              : uploadDone
-                ? friendlyMessageKey(status)
-                : 'imageUploadFailed';
+        // Keep the image + text in the composer so the user can retry. Friendly keys only.
+        const errKey = 'imageUploadFailed';
         setAttachError(errKey);
       } else {
         // Preserve the existing text-only failure behavior exactly.
@@ -485,7 +500,7 @@ export const ChatInterface = ({
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/jpeg,image/png,image/webp"
+              accept="image/*"
               className="hidden"
               onChange={handleFileSelect}
             />
