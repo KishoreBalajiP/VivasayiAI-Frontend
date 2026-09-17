@@ -228,6 +228,7 @@ export const ChatInterface = ({
         const turn = await runImageTurn({
           file: selectedImage.file,
           message: text,
+          fallbackMessage: t('imageOnlyPrompt'),
           language,
           chatId: sessionIdAtSend,
           onUploaded: () => setSendStage('analyzing'),

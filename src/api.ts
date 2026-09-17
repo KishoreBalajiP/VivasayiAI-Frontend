@@ -162,13 +162,23 @@ export const runImageTurn = async ({
   language,
   chatId,
   onUploaded,
+  fallbackMessage,
 }: {
   file: File;
   message: string;
   language: string;
   chatId?: string | null;
   onUploaded?: () => void;
+  fallbackMessage?: string;
 }): Promise<ImageTurnResult> => {
+  // The backend /chat contract requires a non-empty message ("" → 400 "Message is required").
+  // An image-only turn has no typed text, so the composer passes a localized image-analysis
+  // instruction as fallbackMessage; both empty is a caller bug and is refused before any work.
+  const effectiveMessage = message.trim() || (fallbackMessage ?? '').trim();
+  if (!effectiveMessage) {
+    return { ok: false, failure: { phase: 'chat', status: 400 } };
+  }
+
   let uploadId: string;
   try {
     ({ uploadId } = await uploadImage(file));
@@ -182,7 +192,7 @@ export const runImageTurn = async ({
   onUploaded?.();
 
   try {
-    const data = await sendChatMessage(message, language, chatId, uploadId);
+    const data = await sendChatMessage(effectiveMessage, language, chatId, uploadId);
     return { ok: true, data };
   } catch (error) {
     return {
