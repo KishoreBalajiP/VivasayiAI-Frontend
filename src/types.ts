@@ -10,8 +10,10 @@ export interface ImageAttachment {
   previewUrl: string;
   file: File;
   // Client-detected format (sniffed from the file's magic bytes) so the preview chip can show
-  // an honest "JPEG · 240 KB" label even when the browser reports no/odd MIME type.
-  detectedType?: 'jpeg' | 'png' | 'webp';
+  // an honest "JPEG · 240 KB" label even when the browser reports no/odd MIME type. Null when
+  // the file was accepted on the browser's `image/*` MIME alone (the backend re-verifies the
+  // real bytes); the preview chip falls back to a neutral "IMG" label in that case.
+  detectedType?: 'jpeg' | 'png' | 'webp' | null;
 }
 
 export interface Message {

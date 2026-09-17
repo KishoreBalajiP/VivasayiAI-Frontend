@@ -112,8 +112,20 @@ const putFileToPresignedUrl = async (
 export const uploadImage = async (file: File): Promise<UploadResult> => {
   const bytes = new Uint8Array(await file.slice(0, 16).arrayBuffer());
   const sniffed = detectImageType(bytes);
-  if (!sniffed) throw new ApiClientError(400, friendlyMessageKey(400));
-  const contentType = TYPE_TO_CONTENT_TYPE[sniffed];
+  const browserType = (file.type || '').toLowerCase();
+
+  // Declare the canonical content type the backend knows (sniffed JPEG/PNG/WebP). When the
+  // sniff finds nothing but the browser/OS still identifies an image (e.g. HEIC, TIFF), send
+  // the browser MIME as declared type — the backend's presign allow-list rejects unsupported
+  // ones with a clean 400-level processing error. Only content that is NOT an image at all
+  // is refused here (validation already rejects it; belt-and-braces for direct callers).
+  let contentType: string | null = null;
+  if (sniffed) {
+    contentType = TYPE_TO_CONTENT_TYPE[sniffed];
+  } else if (browserType.startsWith('image/')) {
+    contentType = browserType;
+  }
+  if (!contentType) throw new ApiClientError(400, friendlyMessageKey(400));
 
   const presign = await request<PresignedUpload>('/upload/presign', {
     method: 'POST',
@@ -127,6 +139,57 @@ export const uploadImage = async (file: File): Promise<UploadResult> => {
     method: 'POST',
   });
   return complete.data;
+};
+
+// E3 image-turn orchestrator: upload first, then send the message with the returned
+// uploadId. `/chat` is structurally unreachable with a missing/stale uploadId — if any step
+// of the upload (presign, direct S3 PUT, or complete) rejects, the message is never sent.
+// The discriminated result lets the composer pick the right friendly error per phase.
+export type ImageTurnFailurePhase = 'upload' | 'chat';
+
+export interface ImageTurnFailure {
+  phase: ImageTurnFailurePhase;
+  status: number;
+}
+
+export type ImageTurnResult =
+  | { ok: true; data: ChatResult }
+  | { ok: false; failure: ImageTurnFailure };
+
+export const runImageTurn = async ({
+  file,
+  message,
+  language,
+  chatId,
+  onUploaded,
+}: {
+  file: File;
+  message: string;
+  language: string;
+  chatId?: string | null;
+  onUploaded?: () => void;
+}): Promise<ImageTurnResult> => {
+  let uploadId: string;
+  try {
+    ({ uploadId } = await uploadImage(file));
+  } catch (error) {
+    return {
+      ok: false,
+      failure: { phase: 'upload', status: error instanceof ApiClientError ? error.status : 0 },
+    };
+  }
+
+  onUploaded?.();
+
+  try {
+    const data = await sendChatMessage(message, language, chatId, uploadId);
+    return { ok: true, data };
+  } catch (error) {
+    return {
+      ok: false,
+      failure: { phase: 'chat', status: error instanceof ApiClientError ? error.status : 0 },
+    };
+  }
 };
 
 // ── /chatsessions ───────────────────────────────────────────────────────────────────────
