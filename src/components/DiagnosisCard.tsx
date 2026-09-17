@@ -35,7 +35,7 @@ export const DiagnosisCard = ({ diagnosis }: DiagnosisCardProps) => {
     (vision.likelyIssues && vision.likelyIssues.length > 0);
 
   return (
-    <div className="mt-2.5 rounded-xl border border-emerald-100 bg-emerald-50/70 p-3 text-sm text-emerald-950">
+    <div className="mt-2.5 min-w-0 break-words rounded-xl border border-emerald-100 bg-emerald-50/70 p-3 text-sm text-emerald-950">
       <p className="mb-1.5 flex items-center gap-1.5 font-semibold">
         <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-600 text-xs text-white">🌱</span>
         {t('imageDiagnosis')}

@@ -18,20 +18,31 @@ const LANGUAGES: { code: Language; label: string; short: string }[] = [
 export const Navbar = ({ hasProfile, onOpenProfile }: NavbarProps) => {
   const { t } = useTranslation();
   const { user, language, setLanguage, logout } = useAuth();
-  const { status, district, requestLocation } = useLocation();
+  const { status, district, details, requestLocation } = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
 
   const name = user?.name?.trim() || user?.email?.split('@')[0] || '';
   const initials = (name || 'U').slice(0, 1).toUpperCase();
 
+  const placeName = details?.displayName ?? null;
   const locationLabel =
-    status === 'granted' && district
-      ? district
+    status === 'granted' && placeName
+      ? placeName
       : status === 'requesting'
         ? t('locationRequesting')
-        : status === 'outside-tn'
-          ? t('outsideTamilNadu')
-          : t('locationFailed');
+        : status === 'outside-tn' && placeName
+          ? placeName
+          : status === 'outside-tn'
+            ? t('outsideTamilNadu')
+            : t('locationFailed');
+
+  const locationTitle =
+    status === 'granted' && details && details.lat !== undefined && details.lon !== undefined
+      ? `${t('detectedLocation')}: ${placeName ?? district ?? ''} · ${t('coordsTitle', {
+          lat: details.lat.toFixed(4),
+          lon: details.lon.toFixed(4),
+        })}`
+      : `${t('detectedLocation')}: ${placeName ?? district ?? ''}`;
 
   return (
     <header className="relative z-30 shrink-0 bg-emerald-900 text-white shadow-md">
@@ -57,8 +68,8 @@ export const Navbar = ({ hasProfile, onOpenProfile }: NavbarProps) => {
           }}
           disabled={status === 'requesting'}
           title={
-            status === 'granted'
-              ? `${t('detectedLocation')}: ${district}`
+            status === 'granted' || status === 'outside-tn'
+              ? locationTitle
               : t('detectLocation')
           }
           className={`ml-1 flex min-w-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors sm:text-sm ${

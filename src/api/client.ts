@@ -9,7 +9,8 @@ import type { ApiEnvelope } from '../types';
 //   Cognito id_token.
 // - Parses the backend's `{ statusCode, message, data }` envelope and preserves HTTP status.
 // - Throws typed ApiClientError with a user-safe message key (never raw backend internals).
-// - Supports JSON and FormData bodies so multipart uploads (Phase 5) need no redesign.
+// - Supports JSON and FormData bodies. Image uploads no longer use multipart (they go
+//   browser → S3 via presigned URLs); FormData support is retained for any raw-field use.
 //
 // Token storage: sessionStorage with an in-memory fallback. Rationale is documented in the
 // Phase 1 report; the token is short-lived (15 min, no refresh endpoint), so sessionStorage

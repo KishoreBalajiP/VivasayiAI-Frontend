@@ -9,9 +9,9 @@ import { LocationProvider } from './context/LocationContext';
 import { Loader2 } from 'lucide-react';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Toaster } from 'sonner';
-import { getProfile } from './api';
-import { ApiClientError } from './api/client';
+import { Toaster, toast } from 'sonner';
+import { getProfile, deleteChatSession } from './api';
+import { ApiClientError, friendlyMessageKey } from './api/client';
 import type { FarmProfile } from './types';
 
 type ProfileStatus = 'loading' | 'loaded' | 'missing' | 'error';
@@ -75,6 +75,29 @@ function App() {
     }
   }, [user, loadProfile]);
 
+  // Whole-chat deletion for the message-menu dialog (the only delete the backend supports).
+  const handleDeleteActiveChat = useCallback(async () => {
+    if (!activeChatId) return;
+    try {
+      await deleteChatSession(activeChatId);
+      setActiveChatId(null);
+      setRefreshChats((prev) => !prev);
+      toast.success(t('chatDeleted'), { duration: 3000 });
+    } catch (err) {
+      if (err instanceof ApiClientError) {
+        if (err.status === 401) return; // auth layer routes to login
+        if (err.status === 404) {
+          // Already gone — return the UI to a safe state without error noise.
+          setActiveChatId(null);
+          return;
+        }
+        toast.error(t(friendlyMessageKey(err.status)), { duration: 4000 });
+        return;
+      }
+      toast.error(t('deleteFailed'), { duration: 4000 });
+    }
+  }, [activeChatId, t]);
+
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-emerald-50 to-white">
@@ -86,12 +109,23 @@ function App() {
     );
   }
 
-  if (!user) return <LoginScreen />;
+  if (!user) {
+    // Public landing page (premium two-panel). LocationProvider is shared with the
+    // authenticated shell so a location resolved pre-login (or in a previous session) is
+    // never re-prompted; `autoRequest={false}` means the landing page never auto-prompts for
+    // permission — the user taps "Use my location", then after login location simply carries
+    // forward and the weather/insight flow picks up from there.
+    return (
+      <LocationProvider autoRequest={false}>
+        <LoginScreen />
+      </LocationProvider>
+    );
+  }
 
   const openProfile = () => setProfileSkipped(false);
 
   return (
-    <LocationProvider>
+    <LocationProvider autoRequest>
       <div className="flex h-dvh flex-col overflow-hidden bg-gray-50">
         {/* NAVBAR — always fully visible (in-flow, first child, everything below is min-h-0) */}
         <Navbar hasProfile={profileStatus === 'loaded'} onOpenProfile={openProfile} />
@@ -117,6 +151,7 @@ function App() {
                 if (createdNew) setRefreshChats((prev) => !prev);
               }}
               onOpenSidebar={() => setIsSidebarOpen(true)}
+              onDeleteChat={handleDeleteActiveChat}
             />
           </main>
         </div>

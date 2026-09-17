@@ -10,15 +10,18 @@ import {
 import {
   getBrowserPosition,
   resolveDistrict,
+  type LocationDetails,
   type LocationErrorKey,
 } from '../services/locationService';
+import { reverseGeocode, applyReverseGeocode } from '../services/reverseGeocode';
 
 // Browser/device location is a SESSION-level concept, separate from the farm profile
 // district. After authentication the app requests permission once, resolves the device
-// position to a usable Tamil Nadu district, and reuses it for the rest of the session
-// (spec: "Store the resolved location appropriately so it can be reused during the current
-// application session"). Weather uses the resolved district via the existing /weather
-// contract. On denial/unavailability/outside-TN we never fabricate a location — the app
+// position to the most precise place available (coordinates + reverse-geocoded
+// village/locality/town → taluk → district → state), and reuses it for the rest of the
+// session (spec: "Store the resolved location appropriately so it can be reused during the
+// current application session"). Weather uses the canonical district via the existing
+// /weather contract. On denial/unavailability we never fabricate a location — the app
 // surfaces an honest state and may offer the user's own farm-profile district as an
 // explicit, user-initiated fallback.
 
@@ -33,10 +36,13 @@ export type LocationStatus =
 
 export interface LocationContextValue {
   status: LocationStatus;
-  // Resolved Tamil Nadu district name when status === 'granted'; null otherwise.
+  // Canonical Tamil Nadu district when status === 'granted'; null otherwise (never a
+  // fabricated TN district for out-of-TN coordinates). Drives the /weather contract.
   district: string | null;
-  // Detected coordinates (kept for the weather card tooltip), null until granted.
+  // Detected coordinates (kept for the weather card tooltip / precision), null until granted.
   coords: { lat: number; lon: number } | null;
+  // Richer place model: finest reverse-geocoded details actually available. Nulls allowed.
+  details: LocationDetails | null;
   // Determined failure reason when status is denied/unavailable/unsupported.
   errorKey: LocationErrorKey | null;
   requestLocation: () => Promise<void>;
@@ -47,8 +53,16 @@ const STORAGE_KEY = 'vivasayi.location';
 interface StoredLocation {
   lat: number;
   lon: number;
-  district: string;
+  district: string | null;
   isInTamilNadu: boolean;
+  displayName: string | null;
+  locality: string | null;
+  village: string | null;
+  townCity: string | null;
+  subDistrict: string | null;
+  state: string | null;
+  country: string | null;
+  source: string | null;
 }
 
 const readStored = (): StoredLocation | null => {
@@ -56,12 +70,7 @@ const readStored = (): StoredLocation | null => {
     const raw = sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as StoredLocation;
-    if (
-      typeof parsed.lat !== 'number' ||
-      typeof parsed.lon !== 'number' ||
-      typeof parsed.district !== 'string' ||
-      !parsed.district
-    ) {
+    if (typeof parsed.lat !== 'number' || typeof parsed.lon !== 'number') {
       return null;
     }
     return parsed;
@@ -77,6 +86,24 @@ const writeStored = (value: StoredLocation): void => {
     // storage unavailable — location stays in memory for this page only
   }
 };
+
+const toStored = (
+  details: LocationDetails,
+  isInTamilNadu: boolean
+): StoredLocation => ({
+  lat: details.lat,
+  lon: details.lon,
+  district: details.district,
+  isInTamilNadu,
+  displayName: details.displayName,
+  locality: details.locality,
+  village: details.village,
+  townCity: details.townCity,
+  subDistrict: details.subDistrict,
+  state: details.state,
+  country: details.country,
+  source: details.source,
+});
 
 const LocationContext = createContext<LocationContextValue | undefined>(undefined);
 
@@ -95,12 +122,20 @@ let requestedInPageSession = false;
 
 interface LocationProviderProps {
   children: ReactNode;
+  // When true (authenticated shell), location is requested once on mount without user
+  // interaction. When false (public landing page), the provider hydrates a previously
+  // resolved session location but never auto-prompts — the user taps "Use my location".
+  autoRequest?: boolean;
 }
 
-export const LocationProvider = ({ children }: LocationProviderProps) => {
+export const LocationProvider = ({
+  children,
+  autoRequest = true,
+}: LocationProviderProps) => {
   const [status, setStatus] = useState<LocationStatus>('idle');
   const [district, setDistrict] = useState<string | null>(null);
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [details, setDetails] = useState<LocationDetails | null>(null);
   const [errorKey, setErrorKey] = useState<LocationErrorKey | null>(null);
   const inFlightRef = useRef(false);
 
@@ -124,23 +159,41 @@ export const LocationProvider = ({ children }: LocationProviderProps) => {
         return;
       }
 
-      const resolved = resolveDistrict(result.position.lat, result.position.lon);
-      if (!resolved.isInTamilNadu) {
-        // Honest unsupported-location state (no fabricated district / no weather).
-        setStatus('outside-tn');
-        setDistrict(null);
-        return;
-      }
+      const { lat, lon } = result.position;
+      const resolved = resolveDistrict(lat, lon);
+      const inTN = resolved.isInTamilNadu;
+      const canonicalDistrict = inTN ? resolved.district : null;
 
-      setCoords({ lat: result.position.lat, lon: result.position.lon });
-      setDistrict(resolved.district);
-      setStatus('granted');
-      writeStored({
-        lat: result.position.lat,
-        lon: result.position.lon,
-        district: resolved.district,
-        isInTamilNadu: true,
-      });
+      setCoords({ lat, lon });
+      setDistrict(canonicalDistrict);
+      setStatus(inTN ? 'granted' : 'outside-tn');
+
+      // Provisional, honest details (canonical district only — no fabricated locality) so
+      // the UI has something immediately; upgraded in place when reverse geocoding returns.
+      const provisional: LocationDetails = {
+        displayName: canonicalDistrict,
+        locality: null,
+        village: null,
+        townCity: null,
+        subDistrict: null,
+        district: canonicalDistrict,
+        state: inTN ? 'Tamil Nadu' : null,
+        country: inTN ? 'India' : null,
+        source: inTN ? 'districts' : null,
+        lat,
+        lon,
+      };
+      setDetails(provisional);
+      writeStored(toStored(provisional, inTN));
+
+      // Best-effort precision upgrade — never used to fabricate a district; on failure the
+      // provisional (district-level for TN, honest state otherwise) remains.
+      const place = await reverseGeocode(lat, lon);
+      if (inFlightRef.current && place) {
+        const enriched = applyReverseGeocode(place, canonicalDistrict, lat, lon);
+        setDetails(enriched);
+        writeStored(toStored(enriched, inTN));
+      }
     } finally {
       inFlightRef.current = false;
     }
@@ -149,19 +202,33 @@ export const LocationProvider = ({ children }: LocationProviderProps) => {
   useEffect(() => {
     // Reuse a location already resolved earlier in this session (no re-prompt, no refetch).
     const stored = readStored();
-    if (stored && stored.district && stored.isInTamilNadu) {
-      setDistrict(stored.district);
+    if (stored) {
       setCoords({ lat: stored.lat, lon: stored.lon });
-      setStatus('granted');
+      setDistrict(stored.district);
+      setDetails({
+        displayName: stored.displayName ?? stored.district,
+        locality: stored.locality,
+        village: stored.village,
+        townCity: stored.townCity,
+        subDistrict: stored.subDistrict,
+        district: stored.district,
+        state: stored.state,
+        country: stored.country,
+        source: (stored.source as LocationDetails['source']) ?? (stored.isInTamilNadu ? 'districts' : null),
+        lat: stored.lat,
+        lon: stored.lon,
+      });
+      setStatus(stored.isInTamilNadu ? 'granted' : 'outside-tn');
       requestedInPageSession = true;
       return;
     }
 
     if (requestedInPageSession) return;
+    if (!autoRequest) return;
     requestedInPageSession = true;
     void requestLocation();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [autoRequest]);
 
   return (
     <LocationContext.Provider
@@ -169,6 +236,7 @@ export const LocationProvider = ({ children }: LocationProviderProps) => {
         status,
         district,
         coords,
+        details,
         errorKey,
         requestLocation,
       }}
