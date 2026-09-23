@@ -2,12 +2,16 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import { useLocation } from '../context/LocationContext';
-import { MapPin, LogOut, User, Sprout, Loader2 } from 'lucide-react';
+import { MapPin, LogOut, User, Sprout, Loader2, MessageSquareText, FileText } from 'lucide-react';
 import type { Language } from '../types';
+
+export type AppSection = 'chat' | 'claims';
 
 interface NavbarProps {
   hasProfile: boolean;
   onOpenProfile: () => void;
+  section: AppSection;
+  onSelectSection: (section: AppSection) => void;
 }
 
 const LANGUAGES: { code: Language; label: string; short: string }[] = [
@@ -15,7 +19,7 @@ const LANGUAGES: { code: Language; label: string; short: string }[] = [
   { code: 'en', label: 'English', short: 'EN' },
 ];
 
-export const Navbar = ({ hasProfile, onOpenProfile }: NavbarProps) => {
+export const Navbar = ({ hasProfile, onOpenProfile, section, onSelectSection }: NavbarProps) => {
   const { t } = useTranslation();
   const { user, language, setLanguage, logout } = useAuth();
   const { status, district, details, requestLocation } = useLocation();
@@ -87,6 +91,30 @@ export const Navbar = ({ hasProfile, onOpenProfile }: NavbarProps) => {
         </button>
 
         <div className="flex-1" />
+
+        {/* SECTION TOGGLE (Assistant / Claims) */}
+        <nav aria-label={t('mainNavigation')} className="flex items-center rounded-full border border-emerald-700 bg-emerald-800 p-0.5 text-sm">
+          <button
+            onClick={() => onSelectSection('chat')}
+            aria-current={section === 'chat' ? 'page' : undefined}
+            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-semibold transition-colors sm:px-3 ${
+              section === 'chat' ? 'bg-white text-emerald-900 shadow' : 'text-emerald-100 hover:text-white'
+            }`}
+          >
+            <MessageSquareText className="h-4 w-4" />
+            <span className="hidden sm:inline">{t('navChat')}</span>
+          </button>
+          <button
+            onClick={() => onSelectSection('claims')}
+            aria-current={section === 'claims' ? 'page' : undefined}
+            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-semibold transition-colors sm:px-3 ${
+              section === 'claims' ? 'bg-white text-emerald-900 shadow' : 'text-emerald-100 hover:text-white'
+            }`}
+          >
+            <FileText className="h-4 w-4" />
+            <span className="hidden sm:inline">{t('navClaims')}</span>
+          </button>
+        </nav>
 
         {/* LANGUAGE PILL (always visible, two-option segmented control) */}
         <div
