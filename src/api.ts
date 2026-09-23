@@ -202,6 +202,27 @@ export const runImageTurn = async ({
   }
 };
 
+// E3 authorized chat-image retrieval (chat-history reconstruction). The persisted message
+// stores only the stable `imageId` (= the backend uploadId). To actually render the private
+// pixel data after a reload, the client asks the backend for a SHORT-LIVED on-demand signed
+// GET URL — ownership is enforced server-side, the URL is never persisted (neither in the
+// browser nor in any backend document), and no S3 key/credentials ever reach the client.
+// The stable source of truth stays `imageId` and the localStorage/sessionStorage is never
+// used for URL persistence.
+export interface ChatImageView {
+  uploadId: string;
+  mediaType: string;
+  signedUrl: string;
+  expiresIn: number;
+}
+
+export const getChatImageUrl = async (uploadId: string): Promise<ChatImageView> => {
+  const envelope = await request<ChatImageView>(`/upload/${encodeURIComponent(uploadId)}/view`, {
+    method: 'GET',
+  });
+  return envelope.data;
+};
+
 // ── /chatsessions ───────────────────────────────────────────────────────────────────────
 // Envelope is unwrapped here so components stay focused on UI/state and never touch
 // {statusCode, message, data} directly.

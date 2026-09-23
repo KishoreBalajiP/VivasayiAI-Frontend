@@ -3,6 +3,7 @@ import { Message } from '../types';
 import { useTranslation } from 'react-i18next';
 import { Sprout, MoreVertical, Trash2 } from 'lucide-react';
 import { DiagnosisCard } from './DiagnosisCard';
+import { PersistedChatImage } from './PersistedChatImage';
 
 interface MessageBubbleProps {
   message: Message;
@@ -48,6 +49,15 @@ export const MessageBubble = ({ message, onRequestDelete }: MessageBubbleProps) 
             alt={t('uploadedImage')}
             className="mb-2 max-h-64 w-full rounded-xl object-cover"
           />
+        )}
+
+        {/* PERSISTED IMAGE TURN (reloaded from chat history). The stable message contract is
+            imageId → ImageRecord; pixels stay private in S3. The bubble requests an authorized
+            short-lived signed URL on demand and renders the ACTUAL image (loading chip while
+            resolving; controlled "image unavailable" chip if the record/object is gone or the
+            URL expired). No permanent URL, no raw S3 key, nothing persisted. */}
+        {message.imageId && !message.image?.previewUrl && (
+          <PersistedChatImage imageId={message.imageId} alt={t('uploadedImage')} />
         )}
 
         {/* TEXT (optional) */}

@@ -22,6 +22,12 @@ export interface Message {
   timestamp: Date;
   text?: string;
   image?: ImageAttachment;
+  // Persisted image-turn link (for history-loaded messages). Copy of the backend
+  // SessionMessage.imageId (`img_<uuid>` uploadId → ImageRecord). When set WITHOUT
+  // `image` (no local preview), the bubble requests an authorized short-lived signed URL via
+  // GET /upload/:uploadId/view and renders the ACTUAL private-S3 image on demand — the URL
+  // is never persisted; imageId remains the stable source of truth.
+  imageId?: string;
   // Backend-returned image diagnosis block (POST /chat image path). Present only on AI
   // messages produced from an image turn. Shape mirrors the backend response exactly.
   diagnosis?: ImageAnalysisResult;
