@@ -3,8 +3,9 @@ import { LoginScreen } from './components/LoginScreen';
 import { ChatInterface } from './components/ChatInterface';
 import { ProfileOnboarding } from './components/ProfileOnboarding';
 import ChatSidebar from './components/ChatSidebar';
-import { Navbar } from './components/Navbar';
+import { Navbar, type AppSection } from './components/Navbar';
 import { WeatherPanel } from './components/WeatherPanel';
+import { ClaimsPage } from './components/ClaimsPage';
 import { LocationProvider } from './context/LocationContext';
 import { Loader2 } from 'lucide-react';
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -23,6 +24,7 @@ function App() {
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [refreshChats, setRefreshChats] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [section, setSection] = useState<AppSection>('chat');
 
   // Farm profile is needed for personalized advice, but it is NOT a gate for the location
   // experience: location + weather work independently. If missing, a dismissible onboarding
@@ -128,32 +130,45 @@ function App() {
     <LocationProvider autoRequest>
       <div className="flex h-dvh flex-col overflow-hidden bg-gray-50">
         {/* NAVBAR — always fully visible (in-flow, first child, everything below is min-h-0) */}
-        <Navbar hasProfile={profileStatus === 'loaded'} onOpenProfile={openProfile} />
+        <Navbar
+          hasProfile={profileStatus === 'loaded'}
+          onOpenProfile={openProfile}
+          section={section}
+          onSelectSection={setSection}
+        />
 
         {/* LOCATION + WEATHER DASHBOARD (location-first, independent of profile) */}
         <WeatherPanel profile={profile} />
 
-        {/* WORKSPACE: sidebar drawer + chat */}
+        {/* WORKSPACE: sidebar drawer + chat (or the claims section) */}
         <div className="relative flex min-h-0 flex-1 overflow-hidden">
-          <ChatSidebar
-            activeChatId={activeChatId}
-            setActiveChatId={setActiveChatId}
-            refreshChats={refreshChats}
-            isOpen={isSidebarOpen}
-            setIsOpen={setIsSidebarOpen}
-          />
+          {section === 'claims' ? (
+            <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+              <ClaimsPage />
+            </main>
+          ) : (
+            <>
+              <ChatSidebar
+                activeChatId={activeChatId}
+                setActiveChatId={setActiveChatId}
+                refreshChats={refreshChats}
+                isOpen={isSidebarOpen}
+                setIsOpen={setIsSidebarOpen}
+              />
 
-          <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <ChatInterface
-              activeChatId={activeChatId}
-              setActiveChatId={setActiveChatId}
-              onMessageSent={(createdNew) => {
-                if (createdNew) setRefreshChats((prev) => !prev);
-              }}
-              onOpenSidebar={() => setIsSidebarOpen(true)}
-              onDeleteChat={handleDeleteActiveChat}
-            />
-          </main>
+              <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+                <ChatInterface
+                  activeChatId={activeChatId}
+                  setActiveChatId={setActiveChatId}
+                  onMessageSent={(createdNew) => {
+                    if (createdNew) setRefreshChats((prev) => !prev);
+                  }}
+                  onOpenSidebar={() => setIsSidebarOpen(true)}
+                  onDeleteChat={handleDeleteActiveChat}
+                />
+              </main>
+            </>
+          )}
         </div>
 
         {/* PROFILE ERROR / RETRY (non-fatal; the shell stays fully usable) */}

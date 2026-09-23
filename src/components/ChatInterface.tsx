@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, type ChangeEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import { useLocation } from '../context/LocationContext';
-import { Message, ImageAttachment, SessionMessage } from '../types';
+import { Message, ImageAttachment } from '../types';
 import {
   Send,
   Image as ImageIcon,
@@ -12,6 +12,7 @@ import {
   MessageSquarePlus,
 } from 'lucide-react';
 import { MessageBubble } from './MessageBubble';
+import { toViewMessages } from '../utils/sessionMessages';
 import { sendChatMessage, getChatSession, runImageTurn } from '../api';
 import type { ChatResult } from '../api';
 import { ApiClientError, friendlyMessageKey } from '../api/client';
@@ -33,16 +34,6 @@ interface Props {
 
 // Backend messages carry no id and use ISO timestamps; the UI model needs a stable React
 // key. The index-based id is a rendering key only — no backend message fields are fabricated.
-const toViewMessages = (msgs: SessionMessage[]): Message[] =>
-  msgs.map((m, i) => ({
-    id: `srv-${i}`,
-    sender: m.sender === 'user' ? 'user' : 'ai',
-    timestamp: new Date(m.timestamp),
-    text: m.text,
-    // imageId (E3 image-turn link) is preserved in the SessionMessage type layer; historical
-    // image turns render as their text/timestamp — the backend does not return diagnosis
-    // payloads in session history, so no diagnosis card is fabricated for them.
-  }));
 
 export const ChatInterface = ({
   activeChatId,
