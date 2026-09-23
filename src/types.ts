@@ -193,3 +193,184 @@ export interface FarmProfileInput {
   acres: number;
   language: 'en' | 'ta';
 }
+
+// ── CROP LOSS CLAIM TYPES — mirror of the backend claim API ─────────────────────────────
+// (08_API_Documentation item 10, ADR-019 P1–P10). Ownership/area/status are ALWAYS backend
+// authority; these types only describe what the backend actually sends/accepts. Nothing here
+// is fabricated. The backend returns NO cognitoSub/userEmail/s3Key/bucket/credentials, and
+// requests NEVER carry identity or state — mirrors the frozen security contract (15 §5).
+
+// Frozen farming-event vocabulary (utils/validation.schemas.js + CLAIM_EVENT_TYPES).
+export type LossEventType =
+  | 'flood'
+  | 'storm'
+  | 'drought'
+  | 'pest'
+  | 'disease'
+  | 'fire'
+  | 'other';
+
+// Frozen claim state machine (models/LossClaim.js CLAIM_STATES; services/claimState.service.js).
+export type ClaimState =
+  | 'draft'
+  | 'submitted'
+  | 'processing'
+  | 'verified'
+  | 'partially_verified'
+  | 'more_evidence_required'
+  | 'rejected'
+  | 'out_of_limit'
+  | 'duplicate_area'
+  | 'withdrawn';
+
+// Evidence processing lifecycle inside the claim evidence service (pending → processing →
+// stored; failed on rejected uploads). Never a client-chosen value.
+export type ClaimEvidenceStatus =
+  | 'pending'
+  | 'uploaded'
+  | 'processing'
+  | 'stored'
+  | 'completed'
+  | 'failed';
+
+// GeoJSON Polygon, WGS84 [lon, lat]. A single exterior ring only (no holes in MVP).
+export type GeoPosition = [number, number];
+export interface GeoJsonPolygon {
+  type: 'Polygon';
+  coordinates: GeoPosition[][];
+}
+
+// A parcel on the caller's farm profile (services/parcel.service.js toParcelPojo).
+// `calculatedAreaAcres` is backend-computed from geometry — never client-supplied.
+export interface ParcelRecord {
+  parcelId: string;
+  name: string;
+  crop: string;
+  geometry: GeoJsonPolygon;
+  calculatedAreaAcres: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Server-owned parcel snapshot frozen onto the claim at creation time.
+export interface ParcelSnapshot {
+  parcelId: string;
+  name: string | null;
+  crop: string | null;
+  parcelAreaAcres: number;
+}
+
+// One evidence image as serialized on a claim (no s3Key/bucket/owner ever).
+export interface ClaimEvidenceEntry {
+  uploadId: string;
+  mediaType: string;
+  size: number;
+  width: number | null;
+  height: number | null;
+  status: string;
+  uploadedAt: string;
+  createdAt: string;
+}
+
+// The per-claim verification assessment (serializeAssessment). Decision fields stay null until
+// the verification engine produces a decision.
+export interface ClaimAssessment {
+  approvedGeometry: GeoJsonPolygon | null;
+  approvedAreaAcres: number | null;
+  aiAggregate: unknown;
+  weatherCorrelation: unknown;
+  rules: VerificationRules | null;
+  state: string | null;
+  reason: string | null;
+  decidedAt: string | null;
+  decidedBy: string | null;
+  adminNote: string | null;
+}
+
+// Engine rule report (claimVerificationEngine.service.js): each named check carries `passed`
+// plus check-specific extras. Rendered as an explainable pass/fail list — never a client verdict.
+export interface VerificationRuleCheck {
+  passed: boolean;
+  remainingEligible?: number;
+  overlapArea?: number;
+  reason?: string;
+}
+
+export interface VerificationRules {
+  timelinessCheck?: VerificationRuleCheck;
+  eventTypeCheck?: VerificationRuleCheck;
+  areaCheck?: VerificationRuleCheck;
+  overlapCheck?: VerificationRuleCheck;
+  weatherCheck?: VerificationRuleCheck;
+  aiCheck?: VerificationRuleCheck;
+  [name: string]: VerificationRuleCheck | undefined;
+}
+
+// Backend LossClaim as serialized (services/claim.service.js serializeClaim). `id` is the Mongo
+// id; `assessment` is present on GET /claims/:claimId and null in the list view.
+export interface LossClaim {
+  id: string;
+  parcelId: string;
+  parcelSnapshot: ParcelSnapshot | null;
+  eventType: LossEventType;
+  eventDate: string;
+  claimedGeometry: GeoJsonPolygon;
+  claimedAreaAcres: number;
+  evidence: ClaimEvidenceEntry[];
+  state: ClaimState;
+  submittedAt: string | null;
+  processedAt: string | null;
+  decidedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  assessment: ClaimAssessment | null;
+}
+
+// Exactly the fields the backend accepts on POST /claims (createClaimBody). The client never
+// sends identity, area, or state — the server derives everything else.
+export interface ClaimCreateInput {
+  parcelId: string;
+  eventType: LossEventType;
+  eventDate: string;
+  geometry: GeoJsonPolygon;
+  idempotencyKey: string;
+}
+
+// Data returned by POST /claims/:claimId/verify (serializeDecision) — the backend's
+// authoritative verification result. `outcome` is null only while in progress.
+export interface VerificationDecision {
+  claimId: string;
+  idempotent: boolean;
+  inProgress: boolean;
+  claimState: ClaimState | null;
+  outcome: string | null;
+  reason: string | null;
+  rules: VerificationRules | null;
+  approvedGeometry: GeoJsonPolygon | null;
+  approvedAreaAcres: number | null;
+  weatherCorrelation: unknown;
+  decidedAt: string | null;
+  decidedBy: string | null;
+  claimedAreaAcres: number;
+  parcelAreaAcres: number | null;
+  evidenceVersion: string | null;
+  engineVersion: string | null;
+}
+
+// POST /profile/parcels/:parcelId/evidence/presign → data.
+export interface EvidencePresign {
+  uploadId: string;
+  uploadUrl: string;
+  expiresIn: number;
+}
+
+// GET /profile/parcels/:parcelId/evidence/:evidenceId/url → data.
+export interface EvidenceSignedUrl {
+  url: string;
+  expiresIn: number;
+}
+
+// DELETE evidence → data.
+export interface EvidenceDeleteResult {
+  removed: boolean;
+}

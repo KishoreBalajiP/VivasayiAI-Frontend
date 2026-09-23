@@ -51,7 +51,11 @@ export default function VoiceRecorder({ onResult }: VoiceRecorderProps) {
   }, [results, isRecording, onResult]);
 
   const handleToggleRecording = () => {
-    isRecording ? stopSpeechToText() : startSpeechToText();
+    if (isRecording) {
+      stopSpeechToText();
+    } else {
+      startSpeechToText();
+    }
   };
 
   return (
