@@ -512,6 +512,26 @@ export const claimCardViewModel = (claim: LossClaim): ClaimCardViewModel => ({
 });
 
 // ── Claim detail view model ──────────────────────────────────────────────────────────────
+// Phase 9 (E9-S9): includes enriched assessment fields (verifiedAreaAcres, remainingEligible, etc.)
+
+export interface ClaimDetailAssessment {
+  approvedGeometry: GeoJsonPolygon | null;
+  approvedAreaAcres: number | null;
+  aiAggregate: unknown;
+  weatherCorrelation: unknown;
+  rules: VerificationRules | null;
+  state: string | null;
+  reason: string | null;
+  decidedAt: string | null;
+  decidedBy: string | null;
+  // E9-S9 additive fields (server-derived, never client-trusted):
+  verifiedAreaAcres: number | null;
+  remainingEligible: number | null;
+  previouslyVerifiedAcres: number | null;
+  inFlightAreaAcres: number | null;
+  overlapWarnings: Array<{ code: string; message: string; claims?: Array<{ claimId: string; siblingState: string; overlapAreaAcres?: number }>; overlapAreaAcres?: number }>;
+  spatialEvaluated: boolean;
+}
 
 export interface ClaimDetailViewModel {
   id: string;
@@ -526,7 +546,7 @@ export interface ClaimDetailViewModel {
   state: ClaimState;
   stateLabelKey: string;
   evidence: ClaimEvidenceEntry[];
-  assessment: Omit<ClaimAssessment, 'adminNote'> | null;
+  assessment: ClaimDetailAssessment | null;
   createdAt: string;
   submittedAt: string | null;
   processedAt: string | null;
@@ -545,10 +565,18 @@ export interface ClaimDetailViewModel {
 }
 
 // Admin notes are internal-only (backend assessment field); they must NEVER reach the UI.
-const stripAdminNote = (assessment: ClaimAssessment): Omit<ClaimAssessment, 'adminNote'> => {
+const stripAdminNote = (assessment: ClaimAssessment): ClaimDetailAssessment => {
   const { adminNote: _discarded, ...rest } = assessment;
   void _discarded;
-  return rest;
+  return {
+    ...rest,
+    verifiedAreaAcres: assessment.verifiedAreaAcres ?? null,
+    remainingEligible: assessment.remainingEligible ?? null,
+    previouslyVerifiedAcres: assessment.previouslyVerifiedAcres ?? null,
+    inFlightAreaAcres: assessment.inFlightAreaAcres ?? null,
+    overlapWarnings: assessment.overlapWarnings ?? [],
+    spatialEvaluated: Boolean(assessment.spatialEvaluated),
+  };
 };
 
 export const claimDetailViewModel = (
@@ -629,6 +657,7 @@ const emptyDetailViewModel = (): ClaimDetailViewModel => ({
 
 // The verification result panel model — displays ONLY backend decision fields. Outcome labels
 // come from the same claimState_* keys (the verification outcome IS a claim state value).
+// Phase 9 (E9-S9): enriched with real overclaim-prevention surface (remainingEligible, overlapWarnings, etc.).
 export interface VerificationResultModel {
   outcomeLabelKey: string | null;
   reason: string | null;
@@ -637,6 +666,13 @@ export interface VerificationResultModel {
   approvedAreaAcres: number | null;
   claimedAreaAcres: number | null;
   parcelAreaAcres: number | null;
+  // E9-S9 additive fields (server-derived, never client-trusted):
+  verifiedAreaAcres: number | null;
+  remainingEligible: number | null;
+  previouslyVerifiedAcres: number | null;
+  inFlightAreaAcres: number | null;
+  overlapWarnings: Array<{ code: string; message: string; claims?: Array<{ claimId: string; siblingState: string; overlapAreaAcres?: number }>; overlapAreaAcres?: number }>;
+  spatialEvaluated: boolean;
   weatherCorrelation: unknown;
   decidedAt: string | null;
   decidedBy: string | null;
@@ -662,6 +698,13 @@ export const verificationResultModel = (
     approvedAreaAcres: verification.approvedAreaAcres,
     claimedAreaAcres: verification.claimedAreaAcres,
     parcelAreaAcres: verification.parcelAreaAcres,
+    // E9-S9 additive fields (server-derived, never client-trusted):
+    verifiedAreaAcres: verification.verifiedAreaAcres ?? null,
+    remainingEligible: verification.remainingEligible ?? null,
+    previouslyVerifiedAcres: verification.previouslyVerifiedAcres ?? null,
+    inFlightAreaAcres: verification.inFlightAreaAcres ?? null,
+    overlapWarnings: verification.overlapWarnings ?? [],
+    spatialEvaluated: Boolean(verification.spatialEvaluated),
     weatherCorrelation: verification.weatherCorrelation ?? null,
     decidedAt: verification.decidedAt ?? null,
     decidedBy: verification.decidedBy ?? null,

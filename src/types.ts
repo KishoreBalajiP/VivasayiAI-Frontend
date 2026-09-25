@@ -338,16 +338,25 @@ export interface ClaimCreateInput {
 
 // Data returned by POST /claims/:claimId/verify (serializeDecision) — the backend's
 // authoritative verification result. `outcome` is null only while in progress.
+// Phase 9 (E9-S9): enriched with real overclaim-prevention surface (08_API_Documentation §10.8).
 export interface VerificationDecision {
   claimId: string;
   idempotent: boolean;
   inProgress: boolean;
   claimState: ClaimState | null;
   outcome: string | null;
+  decision: string | null; // same as outcome, for UI convenience
   reason: string | null;
   rules: VerificationRules | null;
   approvedGeometry: GeoJsonPolygon | null;
   approvedAreaAcres: number | null;
+  // E9-S9 additive fields (server-derived, never client-trusted):
+  verifiedAreaAcres: number | null;
+  remainingEligible: number | null;
+  previouslyVerifiedAcres: number | null;
+  inFlightAreaAcres: number | null;
+  overlapWarnings: OverlapWarning[];
+  spatialEvaluated: boolean;
   weatherCorrelation: unknown;
   decidedAt: string | null;
   decidedBy: string | null;
@@ -355,6 +364,13 @@ export interface VerificationDecision {
   parcelAreaAcres: number | null;
   evidenceVersion: string | null;
   engineVersion: string | null;
+}
+
+export interface OverlapWarning {
+  code: string;
+  message: string;
+  claims?: Array<{ claimId: string; siblingState: string; overlapAreaAcres?: number }>;
+  overlapAreaAcres?: number;
 }
 
 // POST /profile/parcels/:parcelId/evidence/presign → data.
