@@ -2,10 +2,11 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import { useLocation } from '../context/LocationContext';
-import { MapPin, LogOut, User, Sprout, Loader2, MessageSquareText, FileText } from 'lucide-react';
+import { MapPin, LogOut, User, Sprout, Loader2, MessageSquareText, FileText, ShieldCheck } from 'lucide-react';
 import type { Language } from '../types';
 
-export type AppSection = 'chat' | 'claims';
+// Phase 10 (E9-S10): 'admin' unlocks the review workflow section (render-gated by isAdmin).
+export type AppSection = 'chat' | 'claims' | 'admin';
 
 interface NavbarProps {
   hasProfile: boolean;
@@ -21,7 +22,7 @@ const LANGUAGES: { code: Language; label: string; short: string }[] = [
 
 export const Navbar = ({ hasProfile, onOpenProfile, section, onSelectSection }: NavbarProps) => {
   const { t } = useTranslation();
-  const { user, language, setLanguage, logout } = useAuth();
+  const { user, language, setLanguage, logout, isAdmin } = useAuth();
   const { status, district, details, requestLocation } = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -114,6 +115,18 @@ export const Navbar = ({ hasProfile, onOpenProfile, section, onSelectSection }: 
             <FileText className="h-4 w-4" />
             <span className="hidden sm:inline">{t('navClaims')}</span>
           </button>
+          {isAdmin && (
+            <button
+              onClick={() => onSelectSection('admin')}
+              aria-current={section === 'admin' ? 'page' : undefined}
+              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-semibold transition-colors sm:px-3 ${
+                section === 'admin' ? 'bg-white text-emerald-900 shadow' : 'text-emerald-100 hover:text-white'
+              }`}
+            >
+              <ShieldCheck className="h-4 w-4" />
+              <span className="hidden sm:inline">{t('navAdmin')}</span>
+            </button>
+          )}
         </nav>
 
         {/* LANGUAGE PILL (always visible, two-option segmented control) */}

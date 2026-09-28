@@ -22,7 +22,7 @@ import {
   type ClaimWizardStep,
   type StagedEvidence,
 } from '../utils/claimFlow';
-import type { ClaimCreateInput, LossClaim, ParcelRecord } from '../types';
+import type { ClaimCreateInput, LossClaim, LossEventType, ParcelRecord } from '../types';
 
 export interface ClaimWizardProps {
   parcels: ParcelRecord[];

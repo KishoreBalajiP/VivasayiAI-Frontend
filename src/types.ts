@@ -161,6 +161,9 @@ export interface BackendUser {
   email?: string;
   cognitoSub?: string;
   createdAt?: string;
+  // Phase 10 (E9-S10): the backend signs the user's role into the access token (auth.service.js
+  // derives it from cognito:groups / custom:role). 'admin' unlocks the admin review UI.
+  role?: string;
 }
 
 // Backend-issued session tokens (E1-S3). The access token is the ONLY credential the
@@ -274,6 +277,9 @@ export interface ClaimEvidenceEntry {
 
 // The per-claim verification assessment (serializeAssessment). Decision fields stay null until
 // the verification engine produces a decision.
+// Phase 9 (E9-S9): enriched with the additive decision surface (verifiedAreaAcres /
+// remainingEligible / previouslyVerifiedAcres / inFlightAreaAcres / overlapWarnings /
+// spatialEvaluated) exactly as the backend serializes them (claim.service.js serializeAssessment).
 export interface ClaimAssessment {
   approvedGeometry: GeoJsonPolygon | null;
   approvedAreaAcres: number | null;
@@ -285,14 +291,26 @@ export interface ClaimAssessment {
   decidedAt: string | null;
   decidedBy: string | null;
   adminNote: string | null;
+  // Phase 9 (E9-S9) additive surface — optional because legacy assessments (pre-Phase 9)
+  // are legitimately missing these; claimDetailViewModel defaults them to null/[]. Type
+  // optionality mirrors the backend's serializeAssessment additive spread.
+  verifiedAreaAcres?: number | null;
+  remainingEligible?: number | null;
+  previouslyVerifiedAcres?: number | null;
+  inFlightAreaAcres?: number | null;
+  overlapWarnings?: OverlapWarning[];
+  spatialEvaluated?: boolean;
 }
 
 // Engine rule report (claimVerificationEngine.service.js): each named check carries `passed`
 // plus check-specific extras. Rendered as an explainable pass/fail list — never a client verdict.
+// Phase 9 (E9-S9): `insideParcel` is emitted by the spatialCheck rule and `remainingEligible` /
+// `overlapArea` sit on the area/overlap rules.
 export interface VerificationRuleCheck {
   passed: boolean;
   remainingEligible?: number;
   overlapArea?: number;
+  insideParcel?: boolean | null;
   reason?: string;
 }
 
@@ -389,4 +407,194 @@ export interface EvidenceSignedUrl {
 // DELETE evidence → data.
 export interface EvidenceDeleteResult {
   removed: boolean;
+}
+
+// ── PHASE 10 (E9-S10) ADMIN + APPEAL TYPES — mirror of the backend admin/appeal API ────
+// (08_API_Documentation §10.9–10.12). These describe ONLY what the backend actually sends or
+// accepts. The admin UI never crafts identity: actors/approvers come from the verified token
+// server-side; overrides always carry reason + idempotencyKey and are recorded immutably.
+// No cognitoSub/email/s3Key is ever rendered into an admin VIEW model (see adminQueue.ts).
+
+// The four decision states a farmer may appeal (rejected, out_of_limit, duplicate_area,
+// more_evidence_required). Decisions that already acknowledge a positive outcome (verified,
+// partially_verified) or human-closed rows (withdrawn) are NOT appealable.
+export type AppealableDecisionState =
+  | 'rejected'
+  | 'out_of_limit'
+  | 'duplicate_area'
+  | 'more_evidence_required';
+
+// POST /claims/:claimId/appeal body — exactly the fields the backend accepts.
+export interface AppealInput {
+  reason: string;
+}
+
+// Serialized farmer appeal as returned by POST /claims/:claimId/appeal and nested in the
+// admin claim detail (services/appeal.service.js serializeAppeal).
+export interface Appeal {
+  id: string;
+  status: 'submitted' | 'under_review' | 'resolved';
+  reason: string;
+  statement: string | null;
+  evidence: Array<{ uploadId: string; mediaType: string; size: number; uploadedAt: string }>;
+  decision: {
+    kind: 'overridden';
+    toState: ClaimState;
+    reason: string | null;
+    decidedAt?: string;
+  } | null;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+// One row of the admin review queue (GET /admin/claims). `hasAppeal` = active appeal exists;
+// `aiFailed` = the assessment pipeline is stuck (processing longer than the timeout). The
+// backend decides these flags server-side; the UI only renders them.
+export interface AdminQueueEntry {
+  id: string;
+  parcelId: string;
+  parcelName: string | null;
+  crop: string | null;
+  eventType: LossEventType;
+  eventDate: string;
+  claimedAreaAcres: number;
+  state: ClaimState;
+  decidedAt: string | null;
+  createdAt: string;
+  hasAppeal: boolean;
+  appealReason: string | null;
+  appealStatus: string | null;
+  aiFailed: boolean;
+  decisionReason: string | null;
+}
+
+// GET /admin/claims → data. `filters` echoes the normalized filters applied server-side.
+export interface AdminQueueFilters {
+  status: ClaimState | '';
+  eventType: LossEventType | '';
+  search: string;
+  withAppeal: '' | 'true' | 'false';
+  aiFailed: '' | 'true' | 'false';
+}
+
+export interface AdminQueueResponse {
+  items: AdminQueueEntry[];
+  total: number;
+  page: number;
+  limit: number;
+  filters: AdminQueueFilters;
+}
+
+// POST /admin/claims/:claimId/override body.
+export interface OverrideInput {
+  toState: ClaimState;
+  reason: string;
+  adminNote?: string;
+  approverSub?: string;
+  overrideKey: string;
+}
+
+// GET /admin/dashboard → data (server-computed aggregate metrics only).
+export interface DashboardMetrics {
+  total: number;
+  verified: number;
+  partiallyVerified: number;
+  rejected: number;
+  outOfLimit: number;
+  duplicate: number;
+  moreEvidence: number;
+  pendingHumanReview: number;
+  appealCount: number;
+  aiUncertaintyRate: number | null;
+  averageVerificationTimeMs: number | null;
+}
+
+export interface DashboardResponse {
+  rangeDays: number;
+  metrics: DashboardMetrics;
+}
+
+// One fraud-investigation observation entry (GET /admin/investigation, observation-only).
+export interface InvestigationFlag {
+  code: string;
+  severity: 'high' | 'medium' | 'low';
+  message: string;
+}
+
+export interface InvestigationEntry {
+  id: string;
+  ownerKey: string;
+  farmerEmail: string | null;
+  claimCount: number;
+  claimIds: string[];
+  flags: InvestigationFlag[];
+}
+
+export interface InvestigationSummary {
+  totalEntries: number;
+  high: number;
+  medium: number;
+  low: number;
+  totalFlags: number;
+}
+
+export interface InvestigationResponse {
+  rangeDays: number;
+  summary: InvestigationSummary;
+  entries: InvestigationEntry[];
+}
+
+// Admin claim detail (GET /admin/claims/:claimId) — the full, read-only review surface:
+// claim + assessment + appeal + audit + admin actions + parcel + evidence + farmer email.
+export interface AdminAuditRow {
+  actor: string;
+  action: string;
+  fromState: string;
+  toState: string;
+  reason: string;
+  metadata: Record<string, unknown>;
+  requestId: string | null;
+  createdAt: string;
+}
+
+export interface AdminActionRow {
+  id: string;
+  claimId: string;
+  action: string;
+  actorSub: string;
+  actorEmail: string | null;
+  priorState: string;
+  targetState: string;
+  reason: string;
+  adminNote: string | null;
+  approverSub: string | null;
+  appealId: string | null;
+  idempotencyKey: string | null;
+  metadata: Record<string, unknown>;
+  requestId: string | null;
+  createdAt: string;
+}
+
+export interface AdminClaimDetail extends LossClaim {
+  farmer: { cognitoSub: string; email: string | null; name: string | null };
+  parcel: {
+    parcelId: string;
+    name: string | null;
+    crop: string | null;
+    calculatedAreaAcres: number | null;
+    geometry: GeoJsonPolygon | null;
+  } | null;
+  evidenceUrls: Array<{ uploadId: string; url: string; expiresIn: number }>;
+  appeals: Appeal[];
+  audit: AdminAuditRow[];
+  adminActions: AdminActionRow[];
+  meta: { requestedBy: string; requestedAt: string };
+}
+
+// Result of a successful backend override (200 or replay idempotent response).
+export interface OverrideResult {
+  claim: LossClaim;
+  adminAction: AdminActionRow;
+  resolvedAppeals: Array<{ id: string; status: string }>;
+  idempotent: boolean;
 }

@@ -98,6 +98,13 @@ const ASSESSMENT: ClaimAssessment = {
   decidedAt: '2026-09-03T00:00:00.000Z',
   decidedBy: 'engine',
   adminNote: null,
+  // Phase 9 (E9-S9) additive surface (backend serializeAssessment).
+  verifiedAreaAcres: 2.5,
+  remainingEligible: 7.5,
+  previouslyVerifiedAcres: 0,
+  inFlightAreaAcres: 0,
+  overlapWarnings: [],
+  spatialEvaluated: true,
 };
 
 const claimFor = (state: LossClaim['state'], overrides: Partial<LossClaim> = {}): LossClaim => ({
@@ -486,6 +493,7 @@ describe('claimDetailViewModel', () => {
       inProgress: true,
       claimState: 'processing',
       outcome: null,
+      decision: null,
       reason: null,
       rules: null,
       approvedGeometry: null,
@@ -497,6 +505,12 @@ describe('claimDetailViewModel', () => {
       parcelAreaAcres: 2.5,
       evidenceVersion: null,
       engineVersion: null,
+      verifiedAreaAcres: null,
+      remainingEligible: null,
+      previouslyVerifiedAcres: null,
+      inFlightAreaAcres: null,
+      overlapWarnings: [],
+      spatialEvaluated: false,
     };
     expect(claimDetailViewModel(claimFor('processing'), verification).report.kind).toBe('processing');
   });
@@ -508,6 +522,7 @@ describe('claimDetailViewModel', () => {
       inProgress: false,
       claimState: 'verified',
       outcome: 'verified',
+      decision: 'verified',
       reason: null,
       rules: ASSESSMENT.rules,
       approvedGeometry: POLYGON,
@@ -519,6 +534,12 @@ describe('claimDetailViewModel', () => {
       parcelAreaAcres: 2.5,
       evidenceVersion: 'v1',
       engineVersion: 'engine-1',
+      verifiedAreaAcres: 2.5,
+      remainingEligible: null,
+      previouslyVerifiedAcres: null,
+      inFlightAreaAcres: null,
+      overlapWarnings: [],
+      spatialEvaluated: true,
     };
     const model = claimDetailViewModel(claim, verification);
     if (model.report.kind !== 'decision') throw new Error('expected decision');
@@ -536,6 +557,7 @@ describe('verificationResultModel', () => {
     inProgress: false,
     claimState: 'verified',
     outcome: 'verified',
+    decision: 'verified',
     reason: 'Area within limit',
     rules: {
       timelinessCheck: { passed: true },
@@ -552,6 +574,12 @@ describe('verificationResultModel', () => {
     parcelAreaAcres: 2.5,
     evidenceVersion: 'v1',
     engineVersion: 'engine-1',
+    verifiedAreaAcres: 2.1,
+    remainingEligible: 7.5,
+    previouslyVerifiedAcres: 0,
+    inFlightAreaAcres: 0,
+    overlapWarnings: [],
+    spatialEvaluated: true,
   };
 
   it('builds an explainable rule row list with label keys', () => {
@@ -659,7 +687,9 @@ describe('verificationResultModel — Phase 9 enriched fields', () => {
   });
 
   it('handles missing Phase 9 fields gracefully (legacy decision)', () => {
-    const legacyDecision: VerificationDecision = {
+    // The Phase 9 fields are intentionally OMITTED here to prove the model reads missing
+    // surface as null/defaults — the fixture is cast because the enriched type is additive.
+    const legacyDecision = {
       claimId: 'c_1',
       idempotent: true,
       inProgress: false,
@@ -684,7 +714,7 @@ describe('verificationResultModel — Phase 9 enriched fields', () => {
       parcelAreaAcres: 1.0,
       evidenceVersion: 'v1',
       engineVersion: '1',
-    };
+    } as VerificationDecision;
     const model = verificationResultModel(legacyDecision);
     expect(model.verifiedAreaAcres).toBeNull();
     expect(model.remainingEligible).toBeNull();
@@ -696,7 +726,7 @@ describe('verificationResultModel — Phase 9 enriched fields', () => {
 });
 
 describe('claimDetailViewModel — Phase 9 enriched assessment', () => {
-  const phase9Assessment: any = {
+  const phase9Assessment: ClaimAssessment = {
     approvedGeometry: POLYGON,
     approvedAreaAcres: 2.5,
     aiAggregate: null,
@@ -744,7 +774,19 @@ describe('claimDetailViewModel — Phase 9 enriched assessment', () => {
   });
 
   it('handles legacy assessment without Phase 9 fields', () => {
-    const legacyClaim = claimFor('verified', { assessment: ASSESSMENT });
+    const legacyAssessment: ClaimAssessment = {
+      approvedGeometry: POLYGON,
+      approvedAreaAcres: 2.5,
+      aiAggregate: null,
+      weatherCorrelation: null,
+      rules: ASSESSMENT.rules,
+      state: 'verified',
+      reason: null,
+      decidedAt: '2026-09-03T00:00:00.000Z',
+      decidedBy: 'engine',
+      adminNote: null,
+    };
+    const legacyClaim = claimFor('verified', { assessment: legacyAssessment });
     const model = claimDetailViewModel(legacyClaim, null);
     expect(model.assessment).not.toBeNull();
     if (!model.assessment) return;
