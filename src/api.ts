@@ -5,6 +5,7 @@ import type {
   FarmProfile,
   FarmProfileInput,
   ImageAnalysisResult,
+  ParcelRecord,
   SessionMessage,
   UploadResult,
   WeatherResponse,
@@ -301,6 +302,53 @@ export const createProfile = async (input: FarmProfileInput): Promise<FarmProfil
 // (the backend endpoint is exercised by a future settings/profile-management phase).
 export const deleteProfile = async (): Promise<void> => {
   await request('/profile', { method: 'DELETE' });
+};
+
+// ── /profile/parcels ────────────────────────────────────────────────────────────────────────
+// Farm parcel management (Phase 7+). The backend derives ownership from the Bearer token.
+// All operations are scoped to the authenticated user's farm profile.
+
+// POST /profile/parcels — create a new parcel on the caller's farm profile.
+export interface CreateParcelInput {
+  name: string;
+  crop: string;
+  geometry: ParcelRecord['geometry'];
+}
+
+export const listParcels = async (): Promise<ParcelRecord[]> => {
+  const envelope = await request<{ parcels: ParcelRecord[] }>('/profile/parcels');
+  return envelope.data?.parcels ?? [];
+};
+
+export const createParcel = async (input: CreateParcelInput): Promise<ParcelRecord> => {
+  const envelope = await request<{ parcel: ParcelRecord }>('/profile/parcels', {
+    method: 'POST',
+    body: input,
+  });
+  return envelope.data.parcel;
+};
+
+// PATCH /profile/parcels/:parcelId — update an existing parcel (name, crop, geometry).
+export interface UpdateParcelInput {
+  name?: string;
+  crop?: string;
+  geometry?: ParcelRecord['geometry'];
+}
+
+export const updateParcel = async (
+  parcelId: string,
+  input: UpdateParcelInput
+): Promise<ParcelRecord> => {
+  const envelope = await request<{ parcel: ParcelRecord }>(
+    `/profile/parcels/${encodeURIComponent(parcelId)}`,
+    { method: 'PATCH', body: input }
+  );
+  return envelope.data.parcel;
+};
+
+// DELETE /profile/parcels/:parcelId — delete a parcel from the caller's farm profile.
+export const deleteParcel = async (parcelId: string): Promise<void> => {
+  await request(`/profile/parcels/${encodeURIComponent(parcelId)}`, { method: 'DELETE' });
 };
 
 // ── /weather ──────────────────────────────────────────────────────────────────────────────

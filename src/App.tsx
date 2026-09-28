@@ -2,6 +2,8 @@ import { useAuth } from './context/AuthContext';
 import { LoginScreen } from './components/LoginScreen';
 import { ChatInterface } from './components/ChatInterface';
 import { ProfileOnboarding } from './components/ProfileOnboarding';
+import { FarmProfileEditor } from './components/FarmProfileEditor';
+import { ManageParcels } from './components/ManageParcels';
 import ChatSidebar from './components/ChatSidebar';
 import { Navbar, type AppSection } from './components/Navbar';
 import { WeatherPanel } from './components/WeatherPanel';
@@ -34,6 +36,13 @@ function App() {
   const [profile, setProfile] = useState<FarmProfile | null>(null);
   const [profileSkipped, setProfileSkipped] = useState(false);
   const profileLoadedForRef = useRef<string | null>(null);
+
+  // Farm Profile Editor modal state
+  const [showFarmProfileEditor, setShowFarmProfileEditor] = useState(false);
+  const [farmProfileEditorProfile, setFarmProfileEditorProfile] = useState<FarmProfile | null>(null);
+
+  // Manage Parcels modal state
+  const [showManageParcels, setShowManageParcels] = useState(false);
 
   // Sync i18n with auth language
   useEffect(() => {
@@ -79,7 +88,7 @@ function App() {
   }, [user, loadProfile]);
 
   // Whole-chat deletion for the message-menu dialog (the only delete the backend supports).
-  const handleDeleteActiveChat = useCallback(async () => {
+const handleDeleteActiveChat = useCallback(async () => {
     if (!activeChatId) return;
     try {
       await deleteChatSession(activeChatId);
@@ -100,6 +109,27 @@ function App() {
       toast.error(t('deleteFailed'), { duration: 4000 });
     }
   }, [activeChatId, t]);
+
+  const openFarmProfileEditor = useCallback(() => {
+    setFarmProfileEditorProfile(profile);
+    setShowFarmProfileEditor(true);
+  }, [profile]);
+
+  const openManageParcels = useCallback(() => {
+    setShowManageParcels(true);
+  }, []);
+
+  const handleFarmProfileEditorComplete = useCallback((savedProfile: FarmProfile) => {
+    setProfile(savedProfile);
+    setProfileStatus('loaded');
+    setShowFarmProfileEditor(false);
+  }, []);
+
+  const handleManageParcelsClose = useCallback(() => {
+    setShowManageParcels(false);
+    // Reload profile to get updated parcel count
+    void loadProfile();
+  }, [loadProfile]);
 
   if (isLoading) {
     return (
@@ -125,15 +155,14 @@ function App() {
     );
   }
 
-  const openProfile = () => setProfileSkipped(false);
-
   return (
     <LocationProvider autoRequest>
       <div className="flex h-dvh flex-col overflow-hidden bg-gray-50">
         {/* NAVBAR — always fully visible (in-flow, first child, everything below is min-h-0) */}
         <Navbar
           hasProfile={profileStatus === 'loaded'}
-          onOpenProfile={openProfile}
+          onOpenProfile={openFarmProfileEditor}
+          onOpenManageParcels={openManageParcels}
           section={section}
           onSelectSection={setSection}
         />
@@ -157,7 +186,7 @@ function App() {
             )
           ) : section === 'claims' ? (
             <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-              <ClaimsPage />
+              <ClaimsPage profile={profile} />
             </main>
           ) : (
             <>
@@ -205,6 +234,23 @@ function App() {
               setProfileStatus('loaded');
             }}
             onSkip={() => setProfileSkipped(true)}
+          />
+        )}
+
+        {/* FARM PROFILE EDITOR MODAL */}
+        {showFarmProfileEditor && (
+          <FarmProfileEditor
+            existingProfile={farmProfileEditorProfile}
+            onComplete={handleFarmProfileEditorComplete}
+            onCancel={() => setShowFarmProfileEditor(false)}
+          />
+        )}
+
+        {/* MANAGE PARCELS MODAL */}
+        {showManageParcels && (
+          <ManageParcels
+            onClose={handleManageParcelsClose}
+            onParcelsChange={handleManageParcelsClose}
           />
         )}
 

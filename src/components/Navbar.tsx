@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import { useLocation } from '../context/LocationContext';
-import { MapPin, LogOut, User, Sprout, Loader2, MessageSquareText, FileText, ShieldCheck } from 'lucide-react';
+import { MapPin, LogOut, User, Sprout, Loader2, MessageSquareText, FileText, ShieldCheck, Map } from 'lucide-react';
 import type { Language } from '../types';
 
 // Phase 10 (E9-S10): 'admin' unlocks the review workflow section (render-gated by isAdmin).
@@ -11,6 +11,7 @@ export type AppSection = 'chat' | 'claims' | 'admin';
 interface NavbarProps {
   hasProfile: boolean;
   onOpenProfile: () => void;
+  onOpenManageParcels: () => void;
   section: AppSection;
   onSelectSection: (section: AppSection) => void;
 }
@@ -20,7 +21,7 @@ const LANGUAGES: { code: Language; label: string; short: string }[] = [
   { code: 'en', label: 'English', short: 'EN' },
 ];
 
-export const Navbar = ({ hasProfile, onOpenProfile, section, onSelectSection }: NavbarProps) => {
+export const Navbar = ({ hasProfile, onOpenProfile, onOpenManageParcels, section, onSelectSection }: NavbarProps) => {
   const { t } = useTranslation();
   const { user, language, setLanguage, logout, isAdmin } = useAuth();
   const { status, district, details, requestLocation } = useLocation();
@@ -180,7 +181,30 @@ export const Navbar = ({ hasProfile, onOpenProfile, section, onSelectSection }: 
                   )}
                 </div>
 
-                {!hasProfile && (
+                {hasProfile ? (
+                  <>
+                    <button
+                      onClick={() => {
+                        setMenuOpen(false);
+                        onOpenProfile();
+                      }}
+                      className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-emerald-50"
+                    >
+                      <User className="h-4 w-4 text-emerald-700" />
+                      {t('farmProfile')}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setMenuOpen(false);
+                        onOpenManageParcels();
+                      }}
+                      className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-emerald-50"
+                    >
+                      <Map className="h-4 w-4 text-emerald-700" />
+                      {t('manageParcels')}
+                    </button>
+                  </>
+                ) : (
                   <button
                     onClick={() => {
                       setMenuOpen(false);
