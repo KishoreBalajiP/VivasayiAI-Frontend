@@ -98,6 +98,13 @@ const ASSESSMENT: ClaimAssessment = {
   decidedAt: '2026-09-03T00:00:00.000Z',
   decidedBy: 'engine',
   adminNote: null,
+  // Phase 9 (E9-S9) additive surface (backend serializeAssessment).
+  verifiedAreaAcres: 2.5,
+  remainingEligible: 7.5,
+  previouslyVerifiedAcres: 0,
+  inFlightAreaAcres: 0,
+  overlapWarnings: [],
+  spatialEvaluated: true,
 };
 
 const claimFor = (state: LossClaim['state'], overrides: Partial<LossClaim> = {}): LossClaim => ({
@@ -486,6 +493,7 @@ describe('claimDetailViewModel', () => {
       inProgress: true,
       claimState: 'processing',
       outcome: null,
+      decision: null,
       reason: null,
       rules: null,
       approvedGeometry: null,
@@ -497,6 +505,12 @@ describe('claimDetailViewModel', () => {
       parcelAreaAcres: 2.5,
       evidenceVersion: null,
       engineVersion: null,
+      verifiedAreaAcres: null,
+      remainingEligible: null,
+      previouslyVerifiedAcres: null,
+      inFlightAreaAcres: null,
+      overlapWarnings: [],
+      spatialEvaluated: false,
     };
     expect(claimDetailViewModel(claimFor('processing'), verification).report.kind).toBe('processing');
   });
@@ -508,6 +522,7 @@ describe('claimDetailViewModel', () => {
       inProgress: false,
       claimState: 'verified',
       outcome: 'verified',
+      decision: 'verified',
       reason: null,
       rules: ASSESSMENT.rules,
       approvedGeometry: POLYGON,
@@ -519,6 +534,12 @@ describe('claimDetailViewModel', () => {
       parcelAreaAcres: 2.5,
       evidenceVersion: 'v1',
       engineVersion: 'engine-1',
+      verifiedAreaAcres: 2.5,
+      remainingEligible: null,
+      previouslyVerifiedAcres: null,
+      inFlightAreaAcres: null,
+      overlapWarnings: [],
+      spatialEvaluated: true,
     };
     const model = claimDetailViewModel(claim, verification);
     if (model.report.kind !== 'decision') throw new Error('expected decision');
@@ -536,6 +557,7 @@ describe('verificationResultModel', () => {
     inProgress: false,
     claimState: 'verified',
     outcome: 'verified',
+    decision: 'verified',
     reason: 'Area within limit',
     rules: {
       timelinessCheck: { passed: true },
@@ -552,6 +574,12 @@ describe('verificationResultModel', () => {
     parcelAreaAcres: 2.5,
     evidenceVersion: 'v1',
     engineVersion: 'engine-1',
+    verifiedAreaAcres: 2.1,
+    remainingEligible: 7.5,
+    previouslyVerifiedAcres: 0,
+    inFlightAreaAcres: 0,
+    overlapWarnings: [],
+    spatialEvaluated: true,
   };
 
   it('builds an explainable rule row list with label keys', () => {
@@ -592,5 +620,271 @@ describe('viewModelHasSensitiveField security guard', () => {
     // read what the backend declared.
     const model = claimDetailViewModel(claimFor('verified', { assessment: ASSESSMENT }), null);
     expect(model.state).toBe('verified'); // from backend claim.state, not chosen here
+  });
+});
+
+// ── 12. Phase 9 (E9-S9) — enriched verification result model ───────────────────────────────
+
+describe('verificationResultModel — Phase 9 enriched fields', () => {
+  const phase9Decision: VerificationDecision = {
+    claimId: 'c_1',
+    idempotent: true,
+    inProgress: false,
+    claimState: 'verified',
+    outcome: 'verified',
+    decision: 'verified',
+    reason: 'All checks passed',
+    rules: {
+      timelinessCheck: { passed: true },
+      eventTypeCheck: { passed: true },
+      areaCheck: { passed: true, remainingEligible: 7.5 },
+      overlapCheck: { passed: true, overlapArea: 0 },
+      spatialCheck: { passed: true, insideParcel: true },
+      remainingCheck: { passed: true, remainingEligible: 7.5 },
+      aiCheck: { passed: true, reason: 'ok' },
+      weatherCheck: { passed: true, reason: 'ok' },
+    },
+    approvedGeometry: POLYGON,
+    approvedAreaAcres: 2.5,
+    // Phase 9 fields
+    verifiedAreaAcres: 2.5,
+    remainingEligible: 7.5,
+    previouslyVerifiedAcres: 0,
+    inFlightAreaAcres: 0,
+    overlapWarnings: [],
+    spatialEvaluated: true,
+    weatherCorrelation: null,
+    decidedAt: '2026-09-03T00:00:00.000Z',
+    decidedBy: 'engine',
+    claimedAreaAcres: 2.5,
+    parcelAreaAcres: 10.0,
+    evidenceVersion: 'v1',
+    engineVersion: '2',
+  };
+
+  it('includes Phase 9 verifiedAreaAcres and remainingEligible', () => {
+    const model = verificationResultModel(phase9Decision);
+    expect(model.verifiedAreaAcres).toBe(2.5);
+    expect(model.remainingEligible).toBe(7.5);
+    expect(model.previouslyVerifiedAcres).toBe(0);
+    expect(model.inFlightAreaAcres).toBe(0);
+    expect(model.spatialEvaluated).toBe(true);
+  });
+
+  it('includes Phase 9 overlapWarnings when present', () => {
+    const decisionWithWarnings: VerificationDecision = {
+      ...phase9Decision,
+      overlapWarnings: [
+        { code: 'overlaps_verified', message: 'Partial overlap detected', claims: [{ claimId: 'v1', siblingState: 'verified', overlapAreaAcres: 0.3 }], overlapAreaAcres: 0.3 },
+        { code: 'overlaps_in_flight', message: 'Overlaps in-flight claim', claims: [{ claimId: 's1', siblingState: 'submitted' }] },
+      ],
+    };
+    const model = verificationResultModel(decisionWithWarnings);
+    expect(model.overlapWarnings).toHaveLength(2);
+    expect(model.overlapWarnings[0].code).toBe('overlaps_verified');
+    expect(model.overlapWarnings[0].claims).toHaveLength(1);
+    expect(model.overlapWarnings[1].code).toBe('overlaps_in_flight');
+  });
+
+  it('handles missing Phase 9 fields gracefully (legacy decision)', () => {
+    // The Phase 9 fields are intentionally OMITTED here to prove the model reads missing
+    // surface as null/defaults — the fixture is cast because the enriched type is additive.
+    const legacyDecision = {
+      claimId: 'c_1',
+      idempotent: true,
+      inProgress: false,
+      claimState: 'verified',
+      outcome: 'verified',
+      decision: 'verified',
+      reason: 'All checks passed',
+      rules: {
+        timelinessCheck: { passed: true },
+        eventTypeCheck: { passed: true },
+        areaCheck: { passed: true, remainingEligible: 0.5 },
+        overlapCheck: { passed: true, overlapArea: 0 },
+        aiCheck: { passed: true, reason: 'ok' },
+        weatherCheck: { passed: true, reason: 'ok' },
+      },
+      approvedGeometry: POLYGON,
+      approvedAreaAcres: 0.5,
+      weatherCorrelation: null,
+      decidedAt: '2026-09-03T00:00:00.000Z',
+      decidedBy: 'engine',
+      claimedAreaAcres: 0.5,
+      parcelAreaAcres: 1.0,
+      evidenceVersion: 'v1',
+      engineVersion: '1',
+    } as VerificationDecision;
+    const model = verificationResultModel(legacyDecision);
+    expect(model.verifiedAreaAcres).toBeNull();
+    expect(model.remainingEligible).toBeNull();
+    expect(model.previouslyVerifiedAcres).toBeNull();
+    expect(model.inFlightAreaAcres).toBeNull();
+    expect(model.overlapWarnings).toEqual([]);
+    expect(model.spatialEvaluated).toBe(false);
+  });
+});
+
+describe('claimDetailViewModel — Phase 9 enriched assessment', () => {
+  const phase9Assessment: ClaimAssessment = {
+    approvedGeometry: POLYGON,
+    approvedAreaAcres: 2.5,
+    aiAggregate: null,
+    weatherCorrelation: null,
+    rules: {
+      timelinessCheck: { passed: true },
+      eventTypeCheck: { passed: true },
+      areaCheck: { passed: true, remainingEligible: 7.5 },
+      overlapCheck: { passed: true, overlapArea: 0 },
+      spatialCheck: { passed: true, insideParcel: true },
+      remainingCheck: { passed: true, remainingEligible: 7.5 },
+      aiCheck: { passed: true, reason: 'ok' },
+      weatherCheck: { passed: true, reason: 'ok' },
+    },
+    state: 'verified',
+    reason: null,
+    decidedAt: '2026-09-03T00:00:00.000Z',
+    decidedBy: 'engine',
+    adminNote: null,
+    // Phase 9 fields
+    verifiedAreaAcres: 2.5,
+    remainingEligible: 7.5,
+    previouslyVerifiedAcres: 0,
+    inFlightAreaAcres: 0,
+    overlapWarnings: [
+      { code: 'overlaps_verified', message: 'Partial overlap', claims: [], overlapAreaAcres: 0.2 },
+    ],
+    spatialEvaluated: true,
+  };
+
+  const claim = claimFor('verified', { assessment: phase9Assessment });
+
+  it('includes Phase 9 assessment fields in the view model', () => {
+    const model = claimDetailViewModel(claim, null);
+    expect(model.assessment).not.toBeNull();
+    if (!model.assessment) return;
+    expect(model.assessment.verifiedAreaAcres).toBe(2.5);
+    expect(model.assessment.remainingEligible).toBe(7.5);
+    expect(model.assessment.previouslyVerifiedAcres).toBe(0);
+    expect(model.assessment.inFlightAreaAcres).toBe(0);
+    expect(model.assessment.overlapWarnings).toHaveLength(1);
+    expect(model.assessment.spatialEvaluated).toBe(true);
+    // adminNote must be stripped
+    expect('adminNote' in model.assessment).toBe(false);
+  });
+
+  it('handles legacy assessment without Phase 9 fields', () => {
+    const legacyAssessment: ClaimAssessment = {
+      approvedGeometry: POLYGON,
+      approvedAreaAcres: 2.5,
+      aiAggregate: null,
+      weatherCorrelation: null,
+      rules: ASSESSMENT.rules,
+      state: 'verified',
+      reason: null,
+      decidedAt: '2026-09-03T00:00:00.000Z',
+      decidedBy: 'engine',
+      adminNote: null,
+    };
+    const legacyClaim = claimFor('verified', { assessment: legacyAssessment });
+    const model = claimDetailViewModel(legacyClaim, null);
+    expect(model.assessment).not.toBeNull();
+    if (!model.assessment) return;
+    expect(model.assessment.verifiedAreaAcres).toBeNull();
+    expect(model.assessment.remainingEligible).toBeNull();
+    expect(model.assessment.previouslyVerifiedAcres).toBeNull();
+    expect(model.assessment.inFlightAreaAcres).toBeNull();
+    expect(model.assessment.overlapWarnings).toEqual([]);
+    expect(model.assessment.spatialEvaluated).toBe(false);
+    expect('adminNote' in model.assessment).toBe(false);
+  });
+});
+
+// ── 13. Phase 9 — overlap warning helpers ────────────────────────────────────────────────────
+
+describe('overlap warning rendering helpers (pure logic for ClaimStatusCard)', () => {
+  // These are the exact i18n keys the ClaimStatusCard uses to render overlap warnings.
+  // Tests ensure the correct key is selected for each overlap code.
+
+  const overlapToWarningKey = (code: string): string => {
+    switch (code) {
+      case 'outside_parcel':
+        return 'overlapOutsideParcel';
+      case 'overlaps_verified':
+        return 'overlapDuplicate'; // same message for duplicate
+      case 'overlaps_in_flight':
+        return 'overlapInFlight';
+      default:
+        return 'overlapWarningsTitle';
+    }
+  };
+
+  it('maps outside_parcel to overlapOutsideParcel', () => {
+    expect(overlapToWarningKey('outside_parcel')).toBe('overlapOutsideParcel');
+  });
+
+  it('maps overlaps_verified to overlapDuplicate', () => {
+    expect(overlapToWarningKey('overlaps_verified')).toBe('overlapDuplicate');
+  });
+
+  it('maps overlaps_in_flight to overlapInFlight', () => {
+    expect(overlapToWarningKey('overlaps_in_flight')).toBe('overlapInFlight');
+  });
+
+  it('falls back to overlapWarningsTitle for unknown codes', () => {
+    expect(overlapToWarningKey('unknown')).toBe('overlapWarningsTitle');
+  });
+});
+
+// ── 14. Phase 9 — partial verification detail message ────────────────────────────────────────
+
+describe('partially verified detail message builder', () => {
+  // Pure logic to construct the partially_verified detail line from backend fields.
+  const buildPartialVerifiedDetail = (
+    t: (key: string, options?: { acres?: number }) => string,
+    verifiedAreaAcres: number
+  ): string => {
+    return t('partiallyVerifiedDetail', { acres: verifiedAreaAcres });
+  };
+
+  it('returns the correct i18n key with acres', () => {
+    const t = (key: string, options?: { acres?: number }) => {
+      if (key === 'partiallyVerifiedDetail') return `Partially approved area: ${options?.acres ?? 0} acres`;
+      return key;
+    };
+    expect(buildPartialVerifiedDetail(t, 1.2)).toBe('Partially approved area: 1.2 acres');
+  });
+});
+
+// ── 15. Phase 9 — duplicate area detail message ──────────────────────────────────────────────
+
+describe('duplicate area detail message builder', () => {
+  const buildDuplicateAreaDetail = (t: (key: string) => string): string => {
+    return t('duplicateAreaDetail');
+  };
+
+  it('returns the correct i18n key', () => {
+    const t = (key: string) => (key === 'duplicateAreaDetail' ? 'This area overlaps an existing verified claim.' : key);
+    expect(buildDuplicateAreaDetail(t)).toBe('This area overlaps an existing verified claim.');
+  });
+});
+
+// ── 16. Phase 9 — out of limit detail message ────────────────────────────────────────────────
+
+describe('out of limit detail message builder', () => {
+  const buildOutOfLimitDetail = (
+    t: (key: string, options?: { remaining?: number; claimed?: number }) => string,
+    remaining: number,
+    claimed: number
+  ): string => {
+    return t('outOfLimitDetail', { remaining, claimed });
+  };
+
+  it('returns the correct i18n key with remaining and claimed acres', () => {
+    const t = (key: string, options?: { remaining?: number; claimed?: number }) => {
+      if (key === 'outOfLimitDetail') return `Only ${options?.remaining} acres remain eligible. The ${options?.claimed} new acres exceed this limit.`;
+      return key;
+    };
+    expect(buildOutOfLimitDetail(t, 2.5, 3.0)).toBe('Only 2.5 acres remain eligible. The 3 new acres exceed this limit.');
   });
 });

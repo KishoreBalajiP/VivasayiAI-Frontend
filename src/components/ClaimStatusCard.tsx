@@ -144,7 +144,62 @@ export const VerificationResultCard = ({
             <dd className="font-semibold text-gray-800">{model.weatherCorrelation}</dd>
           </div>
         )}
+        {/* Phase 9 (E9-S9) — remaining eligible & overlap budget */}
+        {model.remainingEligible !== null && (
+          <div>
+            <dt className="text-xs text-gray-500">{t('remainingEligibleLabel')}</dt>
+            <dd className="font-semibold text-emerald-700">{model.remainingEligible} {t('acre')}</dd>
+          </div>
+        )}
+        {model.previouslyVerifiedAcres !== null && model.previouslyVerifiedAcres > 0 && (
+          <div>
+            <dt className="text-xs text-gray-500">{t('previouslyVerifiedLabel')}</dt>
+            <dd className="font-semibold text-gray-700">{model.previouslyVerifiedAcres} {t('acre')}</dd>
+          </div>
+        )}
+        {model.inFlightAreaAcres !== null && model.inFlightAreaAcres > 0 && (
+          <div>
+            <dt className="text-xs text-gray-500">{t('inFlightLabel')}</dt>
+            <dd className="font-semibold text-amber-700">{model.inFlightAreaAcres} {t('acre')}</dd>
+          </div>
+        )}
+        {model.verifiedAreaAcres !== null && (
+          <div>
+            <dt className="text-xs text-gray-500">{t('verifiedAreaLabel')}</dt>
+            <dd className="font-semibold text-emerald-800">{model.verifiedAreaAcres} {t('acre')}</dd>
+          </div>
+        )}
       </dl>
+
+      {/* Phase 9 (E9-S9) — Overlap warnings */}
+      {model.overlapWarnings.length > 0 && (
+        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
+          <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-amber-800">
+            <XCircle className="h-3.5 w-3.5" />
+            {t('overlapWarningsTitle')}
+          </div>
+          <ul className="space-y-1">
+            {model.overlapWarnings.map((warning, idx) => (
+              <li key={idx} className="flex items-start gap-2 text-amber-700">
+                <span className="mt-0.5 h-1.5 w-1.5 rounded-full bg-amber-500" />
+                <span>{warning.message}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Phase 9 (E9-S9) — Outcome-specific detail messages */}
+      {(model.outcomeLabelKey === 'claimState_duplicate_area' || model.outcomeLabelKey === 'claimState_partially_verified' || model.outcomeLabelKey === 'claimState_out_of_limit') && (
+        <div className="mb-3 rounded-xl border border-gray-100 bg-gray-50 p-3 text-sm text-gray-700">
+          {model.outcomeLabelKey === 'claimState_duplicate_area' && t('duplicateAreaDetail')}
+          {model.outcomeLabelKey === 'claimState_partially_verified' &&
+            model.verifiedAreaAcres !== null && t('partiallyVerifiedDetail', { acres: model.verifiedAreaAcres })}
+          {model.outcomeLabelKey === 'claimState_out_of_limit' &&
+            model.remainingEligible !== null && model.claimedAreaAcres !== null &&
+            t('outOfLimitDetail', { remaining: model.remainingEligible, claimed: model.claimedAreaAcres })}
+        </div>
+      )}
 
       <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-gray-100 pt-2 text-xs text-gray-500">
         {model.decidedAt && <span>{t('decidedAtLabel')}: {formatClaimDate(model.decidedAt, language)}</span>}

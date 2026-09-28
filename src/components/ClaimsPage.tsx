@@ -488,6 +488,7 @@ const VerificationResultInline = ({ assessment }: { assessment: LossClaim['asses
     inProgress: false,
     claimState: (assessment.state as LossClaim['state']) ?? null,
     outcome: assessment.state,
+    decision: assessment.state,
     reason: assessment.reason,
     rules: assessment.rules,
     approvedGeometry: assessment.approvedGeometry,
@@ -499,6 +500,13 @@ const VerificationResultInline = ({ assessment }: { assessment: LossClaim['asses
     parcelAreaAcres: 0,
     evidenceVersion: null,
     engineVersion: null,
+    // E9-S9 (Phase 9) additive surface — copied verbatim from the persisted assessment.
+    verifiedAreaAcres: assessment.verifiedAreaAcres ?? null,
+    remainingEligible: assessment.remainingEligible ?? null,
+    previouslyVerifiedAcres: assessment.previouslyVerifiedAcres ?? null,
+    inFlightAreaAcres: assessment.inFlightAreaAcres ?? null,
+    overlapWarnings: assessment.overlapWarnings ?? [],
+    spatialEvaluated: assessment.spatialEvaluated ?? false,
   };
   return <VerificationResultCard verification={decision} language={i18n.language === 'ta' ? 'ta' : 'en'} />;
 };

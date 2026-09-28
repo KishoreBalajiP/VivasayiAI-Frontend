@@ -26,6 +26,10 @@ interface AuthContextType {
   isLoading: boolean;
   isAuthenticating: boolean;
   authError: string | null;
+  // Phase 10 (E9-S10): read-only gate for the admin review UI. The role arrives signed in the
+  // user object the backend returned from POST /auth/google (services/auth.service.js sets
+  // user.role from Cognito): the UI NEVER guesses an admin from email or claims.
+  isAdmin: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -280,6 +284,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         isLoading,
         isAuthenticating,
         authError,
+        isAdmin: user?.role === 'admin',
       }}
     >
       {children}

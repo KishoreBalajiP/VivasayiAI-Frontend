@@ -71,6 +71,7 @@ const DECISION: VerificationDecision = {
   inProgress: false,
   claimState: 'verified',
   outcome: 'verified',
+  decision: 'verified',
   reason: null,
   rules: { timelinessCheck: { passed: true } },
   approvedGeometry: POLYGON,
@@ -82,6 +83,12 @@ const DECISION: VerificationDecision = {
   parcelAreaAcres: 2.5,
   evidenceVersion: 'v1',
   engineVersion: 'engine-1',
+  verifiedAreaAcres: 2.5,
+  remainingEligible: null,
+  previouslyVerifiedAcres: null,
+  inFlightAreaAcres: null,
+  overlapWarnings: [],
+  spatialEvaluated: true,
 };
 
 const ok = <T>(data: T) => ({ statusCode: 200, message: 'OK', data });

@@ -6,6 +6,7 @@ import ChatSidebar from './components/ChatSidebar';
 import { Navbar, type AppSection } from './components/Navbar';
 import { WeatherPanel } from './components/WeatherPanel';
 import { ClaimsPage } from './components/ClaimsPage';
+import { AdminReviewPage } from './components/AdminReviewPage';
 import { LocationProvider } from './context/LocationContext';
 import { Loader2 } from 'lucide-react';
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -18,7 +19,7 @@ import type { FarmProfile } from './types';
 type ProfileStatus = 'loading' | 'loaded' | 'missing' | 'error';
 
 function App() {
-  const { user, language, isLoading, setLanguage } = useAuth();
+  const { user, language, isLoading, setLanguage, isAdmin } = useAuth();
   const { t, i18n } = useTranslation();
 
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
@@ -138,11 +139,23 @@ function App() {
         />
 
         {/* LOCATION + WEATHER DASHBOARD (location-first, independent of profile) */}
-        <WeatherPanel profile={profile} />
+        {section !== 'admin' && <WeatherPanel profile={profile} />}
 
-        {/* WORKSPACE: sidebar drawer + chat (or the claims section) */}
+        {/* WORKSPACE: sidebar drawer + chat, claims section, or the admin review workflow */}
         <div className="relative flex min-h-0 flex-1 overflow-hidden">
-          {section === 'claims' ? (
+          {section === 'admin' ? (
+            !isAdmin ? (
+              // Non-admin fallback: the signed role can never unlock this section — render a
+              // benign empty state rather than pretending an admin surface exists.
+              <main className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center text-sm text-gray-400">
+                {t('adminSectionDenied')}
+              </main>
+            ) : (
+              <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+                <AdminReviewPage />
+              </main>
+            )
+          ) : section === 'claims' ? (
             <main className="flex min-h-0 min-w-0 flex-1 flex-col">
               <ClaimsPage />
             </main>
