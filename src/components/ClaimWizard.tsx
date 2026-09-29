@@ -1,6 +1,6 @@
-import { useReducer, useRef, useState } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, ArrowRight, Loader2, Plus, X, Check, MapPinned } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Loader2, Plus, X, Check, MapPinned, Map } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiClientError, friendlyMessageKey } from '../api/client';
 import { validateImageFile } from '../utils/imageValidation';
@@ -32,6 +32,8 @@ export interface ClaimWizardProps {
   onUploadEvidence: (claimId: string, file: File) => Promise<void>;
   onDone: (claim: LossClaim) => void;
   onCancel: () => void;
+  onManageFarm?: () => void;
+  onAddFirstParcel?: () => void;
 }
 
 export const ClaimWizard = ({
@@ -42,6 +44,8 @@ export const ClaimWizard = ({
   onUploadEvidence,
   onDone,
   onCancel,
+  onManageFarm,
+  onAddFirstParcel,
 }: ClaimWizardProps) => {
   const { t, i18n } = useTranslation();
   const language = i18n.language === 'ta' ? 'ta' : 'en';
@@ -56,6 +60,15 @@ export const ClaimWizard = ({
   const stepIndex = CLAIM_WIZARD_STEPS.indexOf(draft.step);
   const canAdvance = stepCanAdvance(draft);
   const selectedParcel = parcels.find((p) => p.parcelId === draft.parcelId) ?? null;
+
+  // Auto-select single parcel and advance to event step
+  useEffect(() => {
+    if (parcelsStatus === 'ready' && parcels.length === 1 && draft.step === 'parcel' && !draft.parcelId) {
+      const singleParcel = parcels[0];
+      dispatch({ type: 'select.parcel', parcelId: singleParcel.parcelId, geometry: singleParcel.geometry });
+      dispatch({ type: 'next' });
+    }
+  }, [parcels, parcelsStatus, draft.step, draft.parcelId]);
 
   const handleEvidenceSelect = async (files: FileList | null) => {
     if (!files) return;
@@ -182,7 +195,7 @@ export const ClaimWizard = ({
       )}
 
       <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:p-5">
-        {draft.step === 'parcel' && <ParcelStep parcels={parcels} parcelsStatus={parcelsStatus} onRetry={onRetryParcels} selectedParcelId={draft.parcelId} onSelect={(p) => dispatch({ type: 'select.parcel', parcelId: p.parcelId, geometry: p.geometry })} />}
+        {draft.step === 'parcel' && <ParcelStep parcels={parcels} parcelsStatus={parcelsStatus} onRetry={onRetryParcels} selectedParcelId={draft.parcelId} onSelect={(p) => dispatch({ type: 'select.parcel', parcelId: p.parcelId, geometry: p.geometry })} onManageFarm={onManageFarm} onAddFirstParcel={onAddFirstParcel} />}
         {draft.step === 'event' && <EventStep selected={draft.eventType} onSelect={(eventType) => dispatch({ type: 'select.event', eventType })} />}
         {draft.step === 'date' && <DateStep value={draft.eventDate} onChange={(eventDate) => dispatch({ type: 'select.date', eventDate })} />}
         {draft.step === 'area' && <AreaStep parcel={selectedParcel} geometry={draft.geometry} onSelect={(geometry) => dispatch({ type: 'select.area', geometry })} />}
@@ -282,12 +295,16 @@ const ParcelStep = ({
   onRetry,
   selectedParcelId,
   onSelect,
+  onManageFarm,
+  onAddFirstParcel,
 }: {
   parcels: ParcelRecord[];
   parcelsStatus: 'loading' | 'ready' | 'error';
   onRetry: () => void;
   selectedParcelId: string | null;
   onSelect: (parcel: ParcelRecord) => void;
+  onManageFarm?: () => void;
+  onAddFirstParcel?: () => void;
 }) => {
   const { t } = useTranslation();
   if (parcelsStatus === 'loading') {
@@ -310,10 +327,26 @@ const ParcelStep = ({
   }
   if (parcels.length === 0) {
     return (
-      <div className="flex flex-col items-center gap-2 py-8 text-center">
-        <MapPinned className="h-10 w-10 text-emerald-600" />
-        <h3 className="text-base font-bold text-gray-900">{t('noParcelsTitle')}</h3>
+      <div className="flex flex-col items-center gap-4 py-8 text-center">
+        <MapPinned className="h-12 w-12 text-emerald-600" />
+        <h3 className="text-lg font-bold text-gray-900">{t('noParcelsTitle')}</h3>
         <p className="max-w-sm text-sm text-gray-600">{t('noParcelsBody')}</p>
+        <div className="flex flex-col sm:flex-row gap-3 w-full max-w-sm">
+          <button
+            onClick={onManageFarm}
+            className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500 bg-white px-4 py-2.5 text-sm font-semibold text-emerald-700 hover:bg-emerald-50"
+          >
+            <Map className="h-4 w-4" />
+            {t('manageFarmCta')}
+          </button>
+          <button
+            onClick={onAddFirstParcel}
+            className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-green-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:from-emerald-700 hover:to-green-800"
+          >
+            <Plus className="h-4 w-4" />
+            {t('addFirstParcelCta')}
+          </button>
+        </div>
       </div>
     );
   }

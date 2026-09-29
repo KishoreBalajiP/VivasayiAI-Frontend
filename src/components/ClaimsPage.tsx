@@ -30,14 +30,20 @@ import { useClaimsViewport } from '../utils/claimResponsive';
 import { ClaimWizard } from './ClaimWizard';
 import { ClaimStateBadge, VerificationResultCard } from './ClaimStatusCard';
 import ClaimEvidenceGallery from './ClaimEvidenceGallery';
-import type { LossClaim, ParcelRecord, VerificationDecision } from '../types';
+import { FarmProfileEditor } from './FarmProfileEditor';
+import { ManageParcels } from './ManageParcels';
+import type { FarmProfile, LossClaim, ParcelRecord, VerificationDecision } from '../types';
 
 type ClaimsSubview =
   | { name: 'list' }
   | { name: 'new' }
-  | { name: 'detail'; claimId: string };
+  | { name: 'detail'; claimId: string }
+  | { name: 'manageParcels' }
+  | { name: 'farmProfile'; existingProfile?: FarmProfile | null };
 
-export const ClaimsPage = () => {
+export const ClaimsPage = ({ profile }: { profile: FarmProfile | null }) => {
+  // profile is used via subview.existingProfile in farmProfile subview
+  void profile;
   const { i18n } = useTranslation();
   const language = i18n.language === 'ta' ? 'ta' : 'en';
   const [subview, setSubview] = useState<ClaimsSubview>({ name: 'list' });
@@ -46,7 +52,7 @@ export const ClaimsPage = () => {
   const [parcelRetryKey, setParcelRetryKey] = useState(0);
 
   useEffect(() => {
-    if (subview.name !== 'new') return;
+    if (subview.name !== 'new' && subview.name !== 'manageParcels') return;
     let active = true;
     setParcelsStatus('loading');
     listParcels()
@@ -64,6 +70,10 @@ export const ClaimsPage = () => {
       active = false;
     };
   }, [subview.name, parcelRetryKey]);
+
+  const handleParcelsChange = useCallback(() => {
+    setParcelRetryKey(k => k + 1);
+  }, []);
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
@@ -90,6 +100,21 @@ export const ClaimsPage = () => {
           claimId={subview.claimId}
           language={language}
           onBack={() => setSubview({ name: 'list' })}
+        />
+      )}
+      {subview.name === 'manageParcels' && (
+        <ManageParcels
+          onClose={() => setSubview({ name: 'list' })}
+          onParcelsChange={handleParcelsChange}
+        />
+      )}
+      {subview.name === 'farmProfile' && (
+        <FarmProfileEditor
+          existingProfile={subview.existingProfile ?? null}
+          onComplete={() => {
+            setSubview({ name: 'list' });
+          }}
+          onCancel={() => setSubview({ name: 'list' })}
         />
       )}
     </div>
