@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import maplibregl, { type IControl, type LngLatBoundsLike, type Map as MapLibreMap } from 'maplibre-gl';
 import MapboxDraw from 'maplibre-gl-draw';
 import type { FeatureCollection, Polygon } from 'geojson';
-import { AlertTriangle, Eraser, Loader2, MapPin, RotateCcw } from 'lucide-react';
+import { AlertTriangle, Crosshair, Eraser, Loader2, MapPin, RotateCcw } from 'lucide-react';
 import {
   DEFAULT_MAP_CENTER,
   DEFAULT_MAP_ZOOM,
+  DEFAULT_PLACE_ZOOM,
   MAX_MAP_ZOOM,
   MIN_MAP_ZOOM,
   OSM_ATTRIBUTION,
@@ -19,12 +20,17 @@ import {
   validateDrawnPolygon,
   type GeometryProblemKey,
 } from '../utils/parcelGeometry';
+import { LocationContext } from '../context/LocationContext';
+import type { LocationSearchResult } from '../services/locationSearch';
+import { ParcelLocationSearch } from './ParcelLocationSearch';
 import type { GeoJsonPolygon } from '../types';
 
 import 'maplibre-gl/dist/maplibre-gl.css';
 import 'maplibre-gl-draw/dist/mapbox-gl-draw.css';
 
 const CONTEXT_SOURCE_ID = 'context-footprint';
+/** Display-only boundary layer used when `readOnly` is set (no draw control is attached). */
+const BOUNDARY_SOURCE_ID = 'stored-boundary';
 
 export interface ParcelDrawMapProps {
   /** Existing polygon to preload (edit flow). Pass null when creating a new polygon. */
@@ -44,11 +50,13 @@ export interface ParcelDrawMapProps {
   /** True when the polygon must sit inside `contextPolygon` (claim affected area). */
   contextIsContainer?: boolean;
   /**
-   * Display-only mode (View Map). The stored boundary is rendered, panning/zooming and recentring
-   * still work, but every draw/edit/clear affordance is disabled and `onChange` is never emitted.
-   * Implemented with MapboxDraw's `static` mode, which is the control's own non-interactive mode,
-   * rather than by merely hiding the buttons — a mislabelled control would otherwise let a farmer
-   * "edit" a boundary that is never saved.
+   * Display-only mode (View Map). The stored boundary is rendered as a plain GeoJSON layer
+   * rather than through the draw control, so panning/zooming work while every draw/edit/clear
+   * affordance is genuinely absent — a farmer can never edit a boundary that is never saved.
+   *
+   * Note this deliberately does NOT use MapboxDraw's `static` mode: `maplibre-gl-draw` exports a
+   * `STATIC` constant and uses `'static'` in its style filters, but it registers no `static` mode
+   * handler, so `defaultMode: 'static'` makes `onAdd` throw and leaves the map permanently blank.
    */
   readOnly?: boolean;
   compact?: boolean;
@@ -98,6 +106,12 @@ export const ParcelDrawMap = ({
 }: ParcelDrawMapProps) => {
   const { t } = useTranslation();
 
+  // Reuse the app's existing location state (permission + cached coords) instead of adding a
+  // second geolocation implementation. Undefined when no provider is mounted (e.g. isolated
+  // tests), in which case the "my location" control degrades to search-only.
+  const location = useContext(LocationContext);
+  const locationCoords = location?.status === 'granted' ? location.coords : null;
+
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const drawRef = useRef<MapboxDraw | null>(null);
@@ -119,6 +133,16 @@ export const ParcelDrawMap = ({
   const [problem, setProblem] = useState<GeometryProblemKey | null>(null);
   const [previewAcres, setPreviewAcres] = useState<number | null>(null);
   const [seededFor, setSeededFor] = useState<string | null>(null);
+  /** Localized notice for the most recent search / device-location outcome. */
+  const [mapNotice, setMapNotice] = useState<string | null>(null);
+  const [locating, setLocating] = useState(false);
+
+  const flyTo = useCallback((center: [number, number], zoom: number) => {
+    // Defensive only: the search box is not rendered at all when no map exists (the missing-tiles
+    // branch returns before it), so by the time a farmer can pick a result there is always a map
+    // instance to move.
+    mapRef.current?.flyTo({ center, zoom });
+  }, []);
 
   // Identity of the currently seeded polygon, so we only re-seed on a genuine change.
   const seedKey = value ? JSON.stringify(value.coordinates) : null;
@@ -143,11 +167,13 @@ export const ParcelDrawMap = ({
       attributionControl: { compact: true },
     });
 
-    const draw = new MapboxDraw(
-      readOnly
-        ? { displayControlsDefault: false, controls: {}, defaultMode: 'static' }
-        : { displayControlsDefault: false, controls: { polygon: true, trash: true }, defaultMode: 'simple_select' }
-    );
+    // Constructed unconditionally so the refs keep a stable shape, but only ever ATTACHED when
+    // editable: a read-only map renders its boundary as a plain GeoJSON layer instead.
+    const draw = new MapboxDraw({
+      displayControlsDefault: false,
+      controls: { polygon: true, trash: true },
+      defaultMode: 'simple_select',
+    });
 
     // `maplibre-gl-draw` ships its own types that reference a forked MapLibre build
     // (`kt-maplibre-gl`), so structurally-identical `Map` classes are not assignable to
@@ -160,7 +186,14 @@ export const ParcelDrawMap = ({
     drawRef.current = draw;
 
     const handleLoad = () => {
-      map.addControl(drawControl, 'top-left');
+      if (!readOnly) {
+        try {
+          map.addControl(drawControl, 'top-left');
+        } catch {
+          // A control that fails to attach must NOT strand the map behind the opaque loading
+          // overlay, so `ready` is still set below and the farmer keeps a usable basemap.
+        }
+      }
       setMapError(false);
       setReady(true);
     };
@@ -172,8 +205,8 @@ export const ParcelDrawMap = ({
     };
 
     const handleDraw = () => {
-      // `static` mode emits no draw events; this guard makes the read-only contract explicit and
-      // keeps the component safe if the mode is ever changed.
+      // Belt-and-braces: a read-only map never attaches the control, so this only matters if a
+      // draw event were ever delivered anyway. `onChange` must never fire for a stored boundary.
       if (readOnly) return;
       if (suppressRef.current) return;
       const collection = draw.getAll();
@@ -216,9 +249,18 @@ export const ParcelDrawMap = ({
 
   // ── seed an existing polygon into the draw control ────────────────────────────────────────
   useEffect(() => {
-    const draw = drawRef.current;
     const map = mapRef.current;
-    if (!draw || !map || !ready) return;
+    if (!map || !ready) return;
+
+    // A read-only map has no draw control attached; its boundary is rendered by the effect below.
+    if (readOnly) {
+      const bounds = value ? boundsOf(value) : null;
+      if (bounds) map.fitBounds(bounds, { padding: 56, maxZoom: 17, duration: 0 });
+      return;
+    }
+
+    const draw = drawRef.current;
+    if (!draw) return;
     if (seededFor === seedKey) return;
     // The parent echoed back exactly what we emitted — nothing to seed.
     if (lastEmittedRef.current === seedKey) {
@@ -246,7 +288,38 @@ export const ParcelDrawMap = ({
 
     suppressRef.current = false;
     setSeededFor(seedKey);
-  }, [ready, seedKey, seededFor, value]);
+  }, [ready, seedKey, seededFor, value, readOnly]);
+
+  // ── read-only boundary (display-only maps render the stored polygon as a plain layer) ─────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !readOnly) return;
+
+    const data = value
+      ? polygonToCollection(value)
+      : ({ type: 'FeatureCollection', features: [] } as FeatureCollection);
+
+    const existing = map.getSource(BOUNDARY_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    if (existing) {
+      existing.setData(data as never);
+      return;
+    }
+
+    map.addSource(BOUNDARY_SOURCE_ID, { type: 'geojson', data: data as never });
+    map.addLayer({
+      id: `${BOUNDARY_SOURCE_ID}-fill`,
+      type: 'fill',
+      source: BOUNDARY_SOURCE_ID,
+      paint: { 'fill-color': '#059669', 'fill-opacity': 0.18 },
+    });
+    map.addLayer({
+      id: `${BOUNDARY_SOURCE_ID}-line`,
+      type: 'line',
+      source: BOUNDARY_SOURCE_ID,
+      layout: { 'line-join': 'round' },
+      paint: { 'line-color': '#047857', 'line-width': 2 },
+    });
+  }, [value, ready, readOnly]);
 
   // ── context outline (affected-area map shows the parcel it sits inside) ───────────────────
   useEffect(() => {
@@ -308,6 +381,66 @@ export const ParcelDrawMap = ({
     drawRef.current?.changeMode('draw_polygon');
   }, [resetToEmpty, readOnly]);
 
+  /**
+   * Move the map to a searched place.
+   *
+   * This is NAVIGATION ONLY. It never calls the draw control and never touches `value`, so the
+   * existing boundary (if any) is preserved exactly and the farmer still has to draw the parcel.
+   * The zoom comes from the geocoder's own bounding box (see zoomForBoundingBox), clamped to the
+   * map's zoom range, so a village does not slam the camera to street level.
+   */
+  const handleSearchSelect = useCallback(
+    (result: LocationSearchResult) => {
+      flyTo([result.lon, result.lat], result.zoom);
+      setMapNotice(t('locationSelected', { name: result.label }));
+    },
+    [flyTo, t],
+  );
+
+  /**
+   * Fly to the device location, reusing the existing LocationContext. A denied or unavailable
+   * permission shows a localized notice and leaves the map fully usable — the farmer can keep
+   * searching. No location is ever invented.
+   */
+  const handleUseMyLocation = useCallback(async () => {
+    if (locating) return;
+    if (!location) {
+      setMapNotice(t('locationUnavailable'));
+      return;
+    }
+    setLocating(true);
+    setMapNotice(null);
+    try {
+      // Reuses the cached fix when LocationContext already holds one; otherwise prompts.
+      await location.requestLocation();
+    } catch {
+      // requestLocation resolves rather than rejects today, but a rejected geolocation call must
+      // never escape as an unhandled rejection. LocationContext owns the failure state, and the
+      // effect below turns `denied` into a localized notice.
+      setMapNotice(t('locationUnavailable'));
+    } finally {
+      setLocating(false);
+    }
+  }, [location, locating, t]);
+
+  // Fly to a freshly granted/cached device position.
+  useEffect(() => {
+    if (!locationCoords) return;
+    flyTo([locationCoords.lon, locationCoords.lat], DEFAULT_PLACE_ZOOM);
+    setMapNotice(
+      location?.details?.displayName
+        ? t('locationSelected', { name: location.details.displayName })
+        : t('locationUsingDevice'),
+    );
+  }, [locationCoords, location?.details?.displayName, flyTo, t]);
+
+  // Surface a denied permission honestly, once, without breaking the map.
+  useEffect(() => {
+    if (location?.status === 'denied') {
+      setMapNotice(t('locationPermissionDenied'));
+    }
+  }, [location?.status, t]);
+
   // ── missing / invalid tile configuration: explain, never show a blank map ─────────────────
   if (!tileUsable) {
     return (
@@ -326,8 +459,18 @@ export const ParcelDrawMap = ({
 
   return (
     <div className="space-y-2">
+      {/* Search sits ABOVE the map, so its dropdown overlays the canvas and can never be clipped
+          by the map container or the scrollable modal. */}
+      <ParcelLocationSearch onSelect={handleSearchSelect} />
+
       <div className={`relative w-full overflow-hidden rounded-xl border border-gray-200 ${heightClass}`}>
-        <div ref={containerRef} className="absolute inset-0" role="application" aria-label={label} />
+        {/* Height/width come from the parent via h-full/w-full, NOT from `absolute inset-0`:
+            `maplibre-gl.css` declares `.maplibregl-map{position:relative}` with the SAME specificity
+            as Tailwind's `.absolute`, and it is injected later (this chunk is lazy), so it wins.
+            The host then ignores `inset-0`, collapses to 0px (its children are all absolutely
+            positioned), MapLibre falls back to a hardcoded 400x300 canvas and never fires `load`.
+            h-full/w-full resolves against the parent's explicit height under EITHER positioning. */}
+        <div ref={containerRef} className="h-full w-full" role="application" aria-label={label} />
 
         {!ready && !mapError && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-white/85 text-gray-600">
@@ -357,6 +500,21 @@ export const ParcelDrawMap = ({
             <MapPin className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">{t('mapRecenter')}</span>
           </button>
+          {!readOnly && location && (
+            <button
+              type="button"
+              onClick={() => void handleUseMyLocation()}
+              disabled={locating}
+              className="inline-flex items-center gap-1 rounded-lg border border-gray-300 bg-white/95 px-2 py-1.5 text-xs font-semibold text-gray-700 shadow-sm hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {locating ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Crosshair className="h-3.5 w-3.5" />
+              )}
+              <span className="hidden sm:inline">{t('locationUseMyLocation')}</span>
+            </button>
+          )}
           {!readOnly && (
             <>
               <button
@@ -383,6 +541,15 @@ export const ParcelDrawMap = ({
       <p className="text-xs text-gray-500">
         {readOnly ? t('mapViewOnlyHint') : t('mapDrawHint')}
       </p>
+
+      {mapNotice && (
+        <p
+          role="status"
+          className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800"
+        >
+          {mapNotice}
+        </p>
+      )}
 
       {problem && problem !== 'geometryEmpty' && (
         <p

@@ -1,5 +1,6 @@
 import type { LocationDetails } from './locationService';
 import { buildDisplayName } from './locationService';
+import { claimGeocoderSlot } from './geocoderRateLimit';
 
 // Reverse geocoding (PREMIUM LOCATION PASS): resolve device coordinates into the finest
 // place hierarchy the geocoder can provide (village/locality/town/city → taluk/sub-district
@@ -15,6 +16,11 @@ import { buildDisplayName } from './locationService';
 //   - Nominatim attribution is surfaced in the UI (tiny © OpenStreetMap line).
 //   - Never throws: on any failure the caller keeps its (honest) district-level fallback.
 //   - No API key, no secret in frontend source.
+//   - Requests to the shared public instance go through the same ~1 req/second limiter as
+//     forward search (see geocoderRateLimit.ts), so the two cannot combine to breach the cap.
+
+/** Public Nominatim reverse endpoint. Shared with forward search through the rate limiter. */
+const REVERSE_GEOCODER_URL = 'https://nominatim.openstreetmap.org/reverse';
 
 interface NominatimAddress {
   village?: string;
@@ -73,8 +79,12 @@ export const reverseGeocode = async (
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
+    // Shares the limiter with forward search: both hit the same public Nominatim instance, so a
+    // search followed by a "My location" tap must still stay within its ~1 request/second cap.
+    await claimGeocoderSlot(REVERSE_GEOCODER_URL, controller.signal);
+
     const response = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?${params.toString()}`,
+      `${REVERSE_GEOCODER_URL}?${params.toString()}`,
       { headers: { Accept: 'application/json' }, signal: controller.signal }
     );
     if (!response.ok) return null;

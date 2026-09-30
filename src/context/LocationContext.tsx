@@ -107,6 +107,16 @@ const toStored = (
 
 const LocationContext = createContext<LocationContextValue | undefined>(undefined);
 
+/**
+ * Optional variant for components that must work with or without a provider — the parcel map's
+ * "my location" control degrades to search-only instead of throwing when no provider is mounted.
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- standard provider+hook pattern (cf. AuthContext.tsx)
+export const useOptionalLocation = (): LocationContextValue | null =>
+  useContext(LocationContext) ?? null;
+
+export { LocationContext };
+
 // eslint-disable-next-line react-refresh/only-export-components -- standard provider+hook pattern (cf. AuthContext.tsx)
 export const useLocation = (): LocationContextValue => {
   const context = useContext(LocationContext);
