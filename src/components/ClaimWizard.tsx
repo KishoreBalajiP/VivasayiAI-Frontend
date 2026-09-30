@@ -24,14 +24,17 @@ import {
   type ClaimWizardStep,
   type StagedEvidence,
 } from '../utils/claimFlow';
-import type { ClaimCreateInput, LossClaim, LossEventType, ParcelRecord } from '../types';
+import type { ClaimCreateInput, ClaimEvidenceEntry, LossClaim, LossEventType, ParcelRecord } from '../types';
 
 export interface ClaimWizardProps {
   parcels: ParcelRecord[];
   parcelsStatus: 'loading' | 'ready' | 'error';
   onRetryParcels: () => void;
   onCreateClaim: (input: ClaimCreateInput) => Promise<LossClaim>;
-  onUploadEvidence: (claimId: string, file: File) => Promise<void>;
+  onUploadEvidence: (claimId: string, file: File) => Promise<ClaimEvidenceEntry>;
+  // Moves the draft to `submitted`. Called only after create + evidence so the lifecycle ends in
+  // a state the backend can actually verify; there is no separate "submit" affordance elsewhere.
+  onSubmitClaim: (claimId: string) => Promise<LossClaim>;
   onDone: (claim: LossClaim) => void;
   onCancel: () => void;
   onManageFarm?: () => void;
@@ -44,6 +47,7 @@ export const ClaimWizard = ({
   onRetryParcels,
   onCreateClaim,
   onUploadEvidence,
+  onSubmitClaim,
   onDone,
   onCancel,
   onManageFarm,
@@ -87,7 +91,9 @@ export const ClaimWizard = ({
         const { type } = await validateImageFile(file);
         const key = `ev_${String(Math.random()).slice(2)}_${fileMapRef.current.length ?? 0}`;
         fileMapRef.current[key] = file;
-        dispatch({ type: 'evidence.add', entry: { name: file.name, size: file.size, detectedType: type } });
+        // The SAME key goes into the reducer and the File map — the submit loop looks the file up
+        // by `entry.key`, so a mismatch here silently uploads nothing.
+        dispatch({ type: 'evidence.add', entry: { key, name: file.name, size: file.size, detectedType: type } });
       } catch (err) {
         const errorKey = (err as { key?: string })?.key;
         toast.error(errorKey ? t(errorKey) : t('unsupportedImage'), { duration: 4000 });
@@ -110,12 +116,19 @@ export const ClaimWizard = ({
     }
     const parcel = parcels.find((p) => p.parcelId === draft.parcelId);
     if (!parcel || !draft.eventType || !draft.eventDate) return;
+    // The affected area is the farmer's real selection. NEVER substitute the parcel boundary
+    // here: a cleared or never-drawn area must block submission (summary.reason === 'no_geometry')
+    // rather than silently escalating the claim to the whole parcel.
+    if (!draft.geometry) {
+      setSubmitError('reviewReason_no_geometry');
+      return;
+    }
 
     const input: ClaimCreateInput = {
       parcelId: parcel.parcelId,
       eventType: draft.eventType,
       eventDate: draft.eventDate,
-      geometry: draft.geometry ?? parcel.geometry,
+      geometry: draft.geometry,
       idempotencyKey:
         draft.idempotencyKey && isValidIdempotencyKey(draft.idempotencyKey)
           ? draft.idempotencyKey
@@ -125,6 +138,8 @@ export const ClaimWizard = ({
     setSubmitting(true);
     setSubmitError(null);
 
+    // The idempotency key is stable for this wizard session, so a retry after a failed evidence
+    // upload or a failed submit re-attaches to the SAME draft instead of creating a duplicate.
     let claim: LossClaim;
     try {
       claim = await onCreateClaim(input);
@@ -135,26 +150,54 @@ export const ClaimWizard = ({
       return;
     }
 
-    // Evidence uploads run AFTER the draft exists (evidence is claim-scoped). A failed photo
-    // never blocks the claim: it surfaces in the detail view where the farmer can retry.
+    // Evidence uploads run AFTER the draft exists (evidence is claim-scoped) and BEFORE the
+    // submit, so the claim that enters `submitted` already carries its photos. A failed photo
+    // never blocks the claim: it surfaces in the detail view where the farmer can retry it
+    // (evidence stays mutable in `submitted`), exactly as before.
+    let anyEvidenceFailed = false;
     for (const entry of draft.evidence) {
       const file = fileMapRef.current[entry.key];
       if (!file) continue;
+      // Already stored on a previous attempt — never re-presign, which would duplicate evidence.
+      if (entry.status === 'uploaded') continue;
       dispatch({ type: 'evidence.uploading', key: entry.key });
       try {
-        await onUploadEvidence(claim.id, file);
-        dispatch({ type: 'evidence.uploaded', key: entry.key, uploadId: entry.uploadId ?? 'staged' });
+        const stored = await onUploadEvidence(claim.id, file);
+        dispatch({ type: 'evidence.uploaded', key: entry.key, uploadId: stored?.uploadId ?? entry.uploadId ?? 'staged' });
       } catch (err) {
         if (err instanceof ApiClientError && err.status === 401) return;
+        anyEvidenceFailed = true;
         const errorKey =
           err instanceof ApiClientError ? friendlyMessageKey(err.status) : 'imageUploadFailed';
         dispatch({ type: 'evidence.failed', key: entry.key, errorKey });
       }
     }
 
+    // Create → evidence → submit. Without this the claim silently stays `draft`, is never
+    // verifiable (the backend rejects verify for non-submitted claims), and the farmer sees a
+    // "submitted" toast over a claim that was never submitted.
+    let submitted: LossClaim;
+    try {
+      submitted = await onSubmitClaim(claim.id);
+    } catch (err) {
+      if (err instanceof ApiClientError && err.status === 401) return;
+      const errorKey =
+        err instanceof ApiClientError ? friendlyMessageKey(err.status) : 'claimSubmitFailed';
+      setSubmitError(errorKey);
+      setSubmitting(false);
+      // The draft exists and can still be submitted — hand the farmer the detail view, which
+      // offers the submit action for a `draft` claim, instead of stranding them on the wizard.
+      onDone(claim);
+      return;
+    }
+
     setSubmitting(false);
-    toast.success(t('claimSubmittedToast'), { duration: 3000 });
-    onDone(claim);
+    if (anyEvidenceFailed) {
+      toast.warning(t('claimSubmittedSomePhotosFailed'), { duration: 5000 });
+    } else {
+      toast.success(t('claimSubmittedToast'), { duration: 3000 });
+    }
+    onDone(submitted);
   };
 
   return (
@@ -497,7 +540,7 @@ const AreaStep = ({
 }: {
   parcel: ParcelRecord | null;
   geometry: unknown;
-  onSelect: (geometry: ParcelRecord['geometry']) => void;
+  onSelect: (geometry: ParcelRecord['geometry'] | null) => void;
 }) => {
   const { t } = useTranslation();
   const [draftGeometry, setDraftGeometry] = useState<ParcelRecord['geometry'] | null>(null);
@@ -513,7 +556,10 @@ const AreaStep = ({
   return (
     <StepShell title={t('selectArea')}>
       <button
-        onClick={() => onSelect(parcel.geometry)}
+        onClick={() => {
+          setDraftGeometry(null);
+          onSelect(parcel.geometry);
+        }}
         aria-pressed={wholeParcelSelected}
         className={`mb-3 w-full rounded-xl border p-4 text-left transition ${
           wholeParcelSelected ? 'border-emerald-500 bg-emerald-50 ring-2 ring-emerald-100' : 'border-gray-200 bg-white hover:border-emerald-300'
@@ -538,7 +584,10 @@ const AreaStep = ({
         footerNote={t('areaServerAuthority')}
         onChange={(polygon) => {
           setDraftGeometry(polygon);
-          onSelect(polygon ?? parcel.geometry);
+          // Clearing the drawing clears the claim's affected area. Falling back to the parcel
+          // boundary here would turn a partial claim into a full-parcel claim without the farmer
+          // ever asking for it — the single worst outcome of this step.
+          onSelect(polygon);
         }}
       />
       {geometry != null && !wholeParcelSelected && (
@@ -654,9 +703,21 @@ const ReviewStep = ({
         <div className="flex justify-between gap-2">
           <dt className="text-gray-500">{t('reviewArea')}</dt>
           <dd className="text-right font-semibold text-gray-900">
-            {summary.parcelAreaAcres !== null ? t('parcelAreaAcresLabel', { acres: summary.parcelAreaAcres }) : '—'}
+            {summary.claimedAreaAcres !== null
+              ? t('parcelAreaAcresLabel', { acres: summary.claimedAreaAcres })
+              : '—'}
           </dd>
         </div>
+        {/* Whole-parcel total is reference context only — it is NEVER the claimed area unless
+            the farmer explicitly chose the entire parcel above. */}
+        {summary.parcelAreaAcres !== null && (
+          <div className="flex justify-between gap-2">
+            <dt className="text-gray-500">{t('reviewParcelTotal')}</dt>
+            <dd className="text-right text-gray-600">
+              {t('parcelAreaAcresLabel', { acres: summary.parcelAreaAcres })}
+            </dd>
+          </div>
+        )}
         <div className="flex justify-between gap-2">
           <dt className="text-gray-500">{t('reviewEvent')}</dt>
           <dd className="text-right font-semibold text-gray-900">
@@ -678,6 +739,11 @@ const ReviewStep = ({
         <span className={`text-sm font-medium ${summary.ok ? 'text-emerald-700' : 'text-red-600'}`}>
           {summary.ok ? t('reviewReady') : t(stateKey)}
         </span>
+        {summary.ok && (
+          <p className="mt-1 text-xs text-gray-500">
+            {summary.affectedIsWholeParcel ? t('reviewAreaWholeParcel') : t('reviewAreaPartial')}
+          </p>
+        )}
       </div>
     </StepShell>
   );

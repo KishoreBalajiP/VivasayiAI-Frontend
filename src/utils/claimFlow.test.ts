@@ -11,6 +11,7 @@ import {
   canRequestVerification,
   canResubmitClaim,
   canStageEvidence,
+  canSubmitClaim,
   canWithdrawClaim,
   claimCardViewModel,
   claimDetailViewModel,
@@ -35,6 +36,7 @@ import {
   viewModelHasSensitiveField,
   wizardReducer,
 } from './claimFlow';
+import { previewAreaAcres } from './parcelGeometry';
 import type {
   ClaimAssessment,
   ClaimEvidenceEntry,
@@ -67,6 +69,23 @@ const PARCEL: ParcelRecord = {
   calculatedAreaAcres: 2.5,
   createdAt: '2026-09-01T00:00:00.000Z',
   updatedAt: '2026-09-01T00:00:00.000Z',
+};
+
+/**
+ * The southwest quarter of POLYGON — what a farmer actually draws when only part of a 2.5-acre
+ * parcel is affected. Used to prove the review NEVER presents the parcel total as the claim.
+ */
+const PARTIAL_POLYGON: GeoJsonPolygon = {
+  type: 'Polygon',
+  coordinates: [
+    [
+      [78.1, 11.1],
+      [78.15, 11.1],
+      [78.15, 11.15],
+      [78.1, 11.15],
+      [78.1, 11.1],
+    ],
+  ],
 };
 
 const EVIDENCE_ENTRY: ClaimEvidenceEntry = {
@@ -180,6 +199,21 @@ describe('state gates', () => {
     expect(canResubmitClaim('more_evidence_required')).toBe(true);
     for (const s of ['draft', 'submitted', 'processing', 'verified', 'withdrawn'])
       expect(canResubmitClaim(s)).toBe(false);
+  });
+  it('canSubmitClaim ONLY from draft — the recovery path for an unsubmitted claim', () => {
+    expect(canSubmitClaim('draft')).toBe(true);
+    for (const s of [
+      'submitted',
+      'processing',
+      'more_evidence_required',
+      'verified',
+      'partially_verified',
+      'rejected',
+      'out_of_limit',
+      'duplicate_area',
+      'withdrawn',
+    ])
+      expect(canSubmitClaim(s)).toBe(false);
   });
   it('canRequestVerification while submitted / processing / more_evidence_required', () => {
     expect(canRequestVerification('submitted')).toBe(true);
@@ -342,6 +376,41 @@ describe('evidence staging', () => {
     draft = removeStagedEvidence(draft, key);
     expect(draft.evidence).toHaveLength(0);
   });
+
+  // The wizard keeps a `File` in a ref keyed by the entry key and looks each file up by
+  // `entry.key` at submit time. If the reducer regenerated the key, the lookup would miss and the
+  // upload loop would silently send nothing — which is exactly the bug this guards.
+  it('preserves a caller-supplied key so the staged entry resolves to its File', () => {
+    const draft = addStagedEvidence(createEmptyDraft(), {
+      key: 'ev_file_1',
+      name: 'a.jpg',
+      size: 10,
+      detectedType: 'jpeg',
+    });
+    expect(draft.evidence[0].key).toBe('ev_file_1');
+  });
+
+  it('still generates a unique key when the caller supplies none', () => {
+    const draft = addStagedEvidence(
+      addStagedEvidence(createEmptyDraft(), { name: 'a.jpg', size: 10, detectedType: 'jpeg' }),
+      { name: 'b.jpg', size: 10, detectedType: 'jpeg' },
+    );
+    const [first, second] = draft.evidence;
+    expect(first.key).toBeTruthy();
+    expect(second.key).toBeTruthy();
+    expect(first.key).not.toBe(second.key);
+  });
+
+  it('routes the same key through the reducer so ref and draft never diverge', () => {
+    const draft = wizardReducer(createEmptyDraft(), {
+      type: 'evidence.add',
+      entry: { key: 'ev_file_7', name: 'a.jpg', size: 10, detectedType: 'jpeg' },
+    });
+    expect(draft.evidence[0].key).toBe('ev_file_7');
+    // And the lifecycle markers still resolve against that key.
+    const uploaded = markStagedEvidenceUploaded(draft, 'ev_file_7', 'img_1');
+    expect(uploaded.evidence[0]).toMatchObject({ status: 'uploaded', uploadId: 'img_1' });
+  });
 });
 
 describe('stepCanAdvance', () => {
@@ -395,6 +464,43 @@ describe('buildReviewSummary', () => {
     expect(summary.eventType).toBe('flood');
     expect(summary.parcelName).toBe('North Field');
     expect(summary.crop).toBe('Rice');
+  });
+
+  it('reports the DRAWN affected area, never the parcel total', () => {
+    const d = wizardReducer(completeDraft(), { type: 'select.area', geometry: PARTIAL_POLYGON });
+    const summary = buildReviewSummary(d, [PARCEL]);
+    expect(summary.ok).toBe(true);
+    // The old bug returned `parcel.calculatedAreaAcres` unconditionally.
+    expect(summary.claimedAreaAcres).not.toBe(PARCEL.calculatedAreaAcres);
+    // It measures the polygon actually selected: PARTIAL_POLYGON is the SW quarter of POLYGON, so
+    // it must come in strictly under a whole-parcel claim.
+    expect(summary.claimedAreaAcres).toBe(previewAreaAcres(PARTIAL_POLYGON));
+    expect(summary.claimedAreaAcres!).toBeLessThan(previewAreaAcres(POLYGON)!);
+    // The parcel total stays visible as separate reference context.
+    expect(summary.parcelAreaAcres).toBe(2.5);
+  });
+
+  it('flags a whole-parcel selection explicitly and a partial one separately', () => {
+    expect(buildReviewSummary(completeDraft(), [PARCEL]).affectedIsWholeParcel).toBe(true);
+    const partial = wizardReducer(completeDraft(), { type: 'select.area', geometry: PARTIAL_POLYGON });
+    expect(buildReviewSummary(partial, [PARCEL]).affectedIsWholeParcel).toBe(false);
+  });
+
+  it('blocks (rather than defaulting to the parcel) once the drawing is cleared', () => {
+    const cleared = wizardReducer(completeDraft(), { type: 'select.area', geometry: null });
+    const summary = buildReviewSummary(cleared, [PARCEL]);
+    expect(summary.ok).toBe(false);
+    expect(summary.reason).toBe('no_geometry');
+    // Critically: no acreage is offered at all instead of the parcel's.
+    expect(summary.claimedAreaAcres).toBeNull();
+    expect(summary.affectedIsWholeParcel).toBe(false);
+    // And the wizard cannot advance past the area step.
+    expect(stepCanAdvance({ ...cleared, step: 'area' })).toBe(false);
+  });
+
+  it('treats a null area selection as a real clear, not a no-op', () => {
+    const d = wizardReducer(completeDraft(), { type: 'select.area', geometry: null });
+    expect(d.geometry).toBeNull();
   });
   it('fails with no_parcels when the farm has no parcels', () => {
     expect(buildReviewSummary(completeDraft(), []).reason).toBe('no_parcels');
@@ -462,24 +568,34 @@ describe('claimDetailViewModel', () => {
     const model = claimDetailViewModel(null, null);
     expect(model.state).toBe('draft');
     expect(model.canVerify).toBe(false);
+    expect(model.canSubmit).toBe(false);
     expect(viewModelHasSensitiveField(model)).toBe(false);
   });
   it('exposes affordances from backend state only', () => {
+    // A claim still in `draft` must offer submit (and NOT verify — the backend rejects it) so it
+    // is never stranded unsubmitted.
+    const draft = claimDetailViewModel(claimFor('draft'), null);
+    expect(draft.canSubmit).toBe(true);
+    expect(draft.canVerify).toBe(false);
+
     const submitted = claimDetailViewModel(claimFor('submitted'), null);
     expect(submitted.canWithdraw).toBe(true);
     expect(submitted.canResubmit).toBe(false);
     expect(submitted.canVerify).toBe(true);
     expect(submitted.canEditEvidence).toBe(true);
+    expect(submitted.canSubmit).toBe(false);
 
     const mer = claimDetailViewModel(claimFor('more_evidence_required'), null);
     expect(mer.canResubmit).toBe(true);
     expect(mer.canWithdraw).toBe(false);
     expect(mer.canEditEvidence).toBe(true);
+    expect(mer.canSubmit).toBe(false);
 
     const terminal = claimDetailViewModel(claimFor('rejected'), null);
     expect(terminal.canWithdraw).toBe(false);
     expect(terminal.canResubmit).toBe(false);
     expect(terminal.canVerify).toBe(false);
+    expect(terminal.canSubmit).toBe(false);
     expect(terminal.canEditEvidence).toBe(false);
     expect(terminal.isTerminal).toBe(true);
   });

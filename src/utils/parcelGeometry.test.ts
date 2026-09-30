@@ -17,6 +17,7 @@ import {
   extractDrawnPolygon,
   hasUsableGeometry,
   isGeometryInsideParcel,
+  previewAreaAcres,
   ringSelfIntersects,
   ringsCross,
   roundPreviewAcres,
@@ -330,6 +331,51 @@ describe('roundPreviewAcres', () => {
     expect(roundPreviewAcres(1234.56789)).toBe(roundPreviewAcres(1234.56789));
     const value = roundPreviewAcres(9999.999999);
     expect(String(value).split('.')[1]?.length ?? 0).toBeLessThanOrEqual(4);
+  });
+});
+
+describe('previewAreaAcres', () => {
+  it('measures the polygon it is given, not some enclosing parcel', () => {
+    const oneAcre = previewAreaAcres(squarePolygon);
+    expect(oneAcre).toBeGreaterThan(0);
+
+    // A rectangle covering the left half of the square has half the area.
+    // SQUARE is [west, south], [east, south], [east, north], [west, north] — so the NORTH edge is
+    // rows 2/3, not row 1 (reusing row 1 would collapse the ring to a line and area 0).
+    const midX = (SQUARE[0][0] + SQUARE[1][0]) / 2;
+    const half: GeoJsonPolygon = {
+      type: 'Polygon',
+      coordinates: [
+        [
+          [SQUARE[0][0], SQUARE[0][1]],
+          [midX, SQUARE[0][1]],
+          [midX, SQUARE[2][1]],
+          [SQUARE[0][0], SQUARE[2][1]],
+          [SQUARE[0][0], SQUARE[0][1]],
+        ],
+      ],
+    };
+    const halfAcre = previewAreaAcres(half);
+    expect(halfAcre).not.toBeNull();
+    expect(halfAcre!).toBeLessThan(oneAcre!);
+    expect(halfAcre!).toBeCloseTo(oneAcre! / 2, 3);
+  });
+
+  it('returns null for unusable input instead of a fabricated zero', () => {
+    expect(previewAreaAcres(null)).toBeNull();
+    expect(previewAreaAcres(undefined)).toBeNull();
+    expect(previewAreaAcres({ type: 'Polygon', coordinates: [] })).toBeNull();
+    expect(previewAreaAcres({ type: 'Polygon', coordinates: [[[0, 0], [0, 0], [0, 0], [0, 0]]] })).toBeNull();
+    expect(
+      previewAreaAcres({ type: 'Polygon', coordinates: [[['x' as never, 0], [1, 0], [1, 1], [0, 1]]] }),
+    ).toBeNull();
+  });
+
+  it('never reports an area above the polygon it was given', () => {
+    // Rounded to 4 dp, exactly like every other preview value in this module.
+    const preview = previewAreaAcres(squarePolygon);
+    expect(preview).toBe(roundPreviewAcres(preview! * 4046.8564224));
+    expect(String(preview).split('.')[1]?.length ?? 0).toBeLessThanOrEqual(4);
   });
 });
 

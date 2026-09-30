@@ -26,6 +26,7 @@ const drawGetAll = vi.fn();
 const drawChangeMode = vi.fn();
 const drawDeleteAll = vi.fn();
 const drawAdd = vi.fn();
+const fitBounds = vi.fn();
 let currentCentre: [number, number] = [78.4, 9.5];
 
 vi.mock('maplibre-gl', () => {
@@ -45,7 +46,7 @@ vi.mock('maplibre-gl', () => {
     getCenter = () => currentCentre;
     getZoom = () => 11;
     easeTo = vi.fn();
-    fitBounds = vi.fn();
+    fitBounds = fitBounds;
     addSource = vi.fn();
     addLayer = vi.fn();
     getSource = vi.fn();
@@ -295,5 +296,50 @@ describe('device location', () => {
     // With no provider there is no device fix to offer, but search still works.
     expect(screen.queryByRole('button', { name: /My location/i })).not.toBeInTheDocument();
     expect(screen.getByRole('combobox')).toBeEnabled();
+  });
+});
+
+// The claim affected-area map mounts with nothing to seed. Without an explicit fit the farmer
+// lands on the default regional view where a real field is a pixel or two wide, and any polygon
+// they draw is orders of magnitude larger than the parcel they are claiming.
+describe('the affected-area map frames the parcel it sits inside', () => {
+  it('fits the map to the container polygon when there is nothing to seed', async () => {
+    render(
+      <ParcelDrawMap
+        value={null}
+        label="Affected area"
+        contextPolygon={polygon()}
+        contextIsContainer
+        onChange={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(fitBounds).toHaveBeenCalled());
+    expect(fitBounds).toHaveBeenCalledWith(
+      [
+        [79.8, 10.7],
+        [79.9, 10.8],
+      ],
+      expect.objectContaining({ padding: expect.any(Number), maxZoom: expect.any(Number) }),
+    );
+  });
+
+  it('never lets the context fit stand in for a drawn shape the farmer has not made', () => {
+    const onChange = vi.fn();
+    render(
+      <ParcelDrawMap
+        value={null}
+        label="Affected area"
+        contextPolygon={polygon()}
+        contextIsContainer
+        onChange={onChange}
+      />,
+    );
+
+    // Framing the view is a camera move only: it must not seed the draw control, change the
+    // mode, or emit a polygon, or every claim would silently default to the whole parcel.
+    expect(drawAdd).not.toHaveBeenCalled();
+    expect(drawChangeMode).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
   });
 });

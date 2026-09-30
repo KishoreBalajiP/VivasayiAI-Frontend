@@ -8,11 +8,16 @@
 //
 //   - State gates reflect the backend state machine exactly (canWithdraw only draft|submitted,
 //     resubmit only more_evidence_required, evidence mutation only draft|submitted|MER, etc.).
-//   - The affected-area step NEVER fabricates geometry or acreage: it carries the selected
-//     parcel's real geometry forward (the backend recomputes the authoritative area from it).
-//     Partial-area map drawing is an explicitly deferred boundary (ADR-019 P8 — no map yet).
-//   - Area numbers displayed are always the backend-returned values (parcel.calculatedAreaAcres
-//     or claim.claimedAreaAcres), never client math.
+//   - The affected-area step NEVER fabricates geometry or acreage: it carries the farmer's real
+//     selection forward — either the whole parcel boundary (explicitly chosen) or the polygon
+//     they drew (ADR-019 P8). It NEVER silently substitutes the parcel for a missing/cleared
+//     draw. The backend recomputes the authoritative area from whatever is stored.
+//   - Claimed-area numbers shown BEFORE the claim exists are PREVIEW values (utils/
+//     parcelGeometry.ts, the same advisory-only convention the draw map already uses) and are
+//     labelled as such. Once a claim exists, every area number is the backend-returned value
+//     (parcelSnapshot.parcelAreaAcres / claim.claimedAreaAcres), never client math.
+
+import { previewAreaAcres } from './parcelGeometry';
 
 import type {
   ClaimAssessment,
@@ -82,6 +87,12 @@ export const canWithdrawClaim = (state: string): boolean =>
 
 // Resubmit is ONLY ever legal from more_evidence_required (machine edge MER → submitted).
 export const canResubmitClaim = (state: string): boolean => state === 'more_evidence_required';
+
+// Submit is ONLY ever legal from draft (machine edge draft → submitted). Exposed as a claim
+// affordance so a claim that was created but never submitted (interrupted wizard, offline
+// retry, evidence-upload failure) is recoverable from the detail view instead of being stranded
+// in `draft` forever. The backend remains the authority and re-runs every submit-time check.
+export const canSubmitClaim = (state: string): boolean => state === 'draft';
 
 // The farmer may request backend verification while submitted, processing (running), or for a
 // claim awaiting more evidence. Terminal states never re-run (backend idempotency).
@@ -213,16 +224,21 @@ export const CLAIM_EVIDENCE_MAX = 10; // mirrors backend env default CLAIM_EVIDE
 export const canStageEvidence = (draft: ClaimDraft): boolean =>
   draft.evidence.length < CLAIM_EVIDENCE_MAX;
 
+export type StagedEvidenceEntry = Omit<StagedEvidence, 'status' | 'key'> & { key?: string };
+
 export const addStagedEvidence = (
   draft: ClaimDraft,
-  entry: Omit<StagedEvidence, 'key' | 'status'>
+  entry: StagedEvidenceEntry
 ): ClaimDraft => {
   if (!canStageEvidence(draft)) return draft;
   return {
     ...draft,
     evidence: [
       ...draft.evidence,
-      { ...entry, key: cryptoRandomKey(), status: 'staged' },
+      // A caller-supplied key MUST be preserved: the wizard keys its `File` map by the same
+      // value, and a regenerated key would leave the staged entry pointing at no file — the
+      // upload loop would then silently skip it and no evidence would ever be sent.
+      { ...entry, key: entry.key ?? cryptoRandomKey(), status: 'staged' },
     ],
   };
 };
@@ -276,8 +292,10 @@ export type WizardNavigation =
   | { type: 'select.parcel'; parcelId: string; geometry: GeoJsonPolygon }
   | { type: 'select.event'; eventType: LossEventType }
   | { type: 'select.date'; eventDate: string }
-  | { type: 'select.area'; geometry: GeoJsonPolygon }
-  | { type: 'evidence.add'; entry: Omit<StagedEvidence, 'key' | 'status'> }
+  // `null` means "no affected area selected". Clearing the drawing must clear the claim geometry,
+  // never fall back to the parcel boundary.
+  | { type: 'select.area'; geometry: GeoJsonPolygon | null }
+  | { type: 'evidence.add'; entry: StagedEvidenceEntry }
   | { type: 'evidence.remove'; key: string }
   | { type: 'evidence.uploading'; key: string }
   | { type: 'evidence.uploaded'; key: string; uploadId: string }
@@ -368,6 +386,9 @@ export interface ClaimReviewSummary {
   eventType: LossEventType | null;
   eventDate: string | null;
   claimedAreaAcres: number | null;
+  // True when the farmer picked "entire parcel", false when they drew a partial affected area.
+  // Drives the review copy so a partial claim is never presented as the whole parcel.
+  affectedIsWholeParcel: boolean;
   stagedEvidenceCount: number;
 }
 
@@ -385,6 +406,7 @@ export const buildReviewSummary = (
       eventType: null,
       eventDate: null,
       claimedAreaAcres: null,
+      affectedIsWholeParcel: false,
       stagedEvidenceCount: draft.evidence.length,
     };
   }
@@ -399,6 +421,7 @@ export const buildReviewSummary = (
       eventType: null,
       eventDate: null,
       claimedAreaAcres: null,
+      affectedIsWholeParcel: false,
       stagedEvidenceCount: draft.evidence.length,
     };
   }
@@ -412,6 +435,7 @@ export const buildReviewSummary = (
       eventType: null,
       eventDate: draft.eventDate,
       claimedAreaAcres: null,
+      affectedIsWholeParcel: false,
       stagedEvidenceCount: draft.evidence.length,
     };
   }
@@ -426,9 +450,13 @@ export const buildReviewSummary = (
       eventType: draft.eventType,
       eventDate: draft.eventDate,
       claimedAreaAcres: null,
+      affectedIsWholeParcel: false,
       stagedEvidenceCount: draft.evidence.length,
     };
   }
+  // No affected-area selection at all. This MUST stay a hard block: the parcel boundary is a
+  // legal claim only when the farmer explicitly chose it on the area step, never as a silent
+  // fallback for a cleared/never-drawn polygon.
   if (!draft.geometry) {
     return {
       ok: false,
@@ -439,9 +467,15 @@ export const buildReviewSummary = (
       eventType: draft.eventType,
       eventDate: draft.eventDate,
       claimedAreaAcres: null,
+      affectedIsWholeParcel: false,
       stagedEvidenceCount: draft.evidence.length,
     };
   }
+  // The claimed area is a PREVIEW of the polygon the farmer actually selected — it must never be
+  // the parcel total, or a 1.4-acre partial claim would be reviewed (and then submitted) as the
+  // whole parcel. The backend recomputes the stored value from the same geometry.
+  const sameGeometry =
+    JSON.stringify(draft.geometry) === JSON.stringify(parcel.geometry);
   return {
     ok: true,
     reason: 'ready',
@@ -450,7 +484,8 @@ export const buildReviewSummary = (
     parcelAreaAcres: parcel.calculatedAreaAcres,
     eventType: draft.eventType,
     eventDate: draft.eventDate,
-    claimedAreaAcres: parcel.calculatedAreaAcres,
+    claimedAreaAcres: sameGeometry ? parcel.calculatedAreaAcres : previewAreaAcres(draft.geometry),
+    affectedIsWholeParcel: sameGeometry,
     stagedEvidenceCount: draft.evidence.length,
   };
 };
@@ -552,6 +587,7 @@ export interface ClaimDetailViewModel {
   processedAt: string | null;
   decidedAt: string | null;
   isTerminal: boolean;
+  canSubmit: boolean;
   canWithdraw: boolean;
   canResubmit: boolean;
   canVerify: boolean;
@@ -617,6 +653,7 @@ export const claimDetailViewModel = (
     processedAt: claim.processedAt,
     decidedAt: claim.decidedAt,
     isTerminal: isTerminalClaimState(claim.state),
+    canSubmit: canSubmitClaim(claim.state),
     canWithdraw: canWithdrawClaim(claim.state),
     canResubmit: canResubmitClaim(claim.state),
     canVerify: canRequestVerification(claim.state),
@@ -646,6 +683,7 @@ const emptyDetailViewModel = (): ClaimDetailViewModel => ({
   processedAt: null,
   decidedAt: null,
   isTerminal: false,
+  canSubmit: false,
   canWithdraw: false,
   canResubmit: false,
   canVerify: false,
