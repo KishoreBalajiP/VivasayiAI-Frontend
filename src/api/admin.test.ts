@@ -27,7 +27,9 @@ import {
 import type {
   AdminClaimDetail,
   AdminQueueEntry,
+  AdminQueueResponse,
   Appeal,
+  LossClaim,
   OverrideResult,
 } from '../types';
 
@@ -44,20 +46,35 @@ const err = (status: number, message = 'failure') => ({ statusCode: status, mess
 const json = (envelope: unknown, status = 200): Response =>
   new Response(JSON.stringify(envelope), { status, headers: { 'content-type': 'application/json' } });
 
-const QUEUE_ENTRY: AdminQueueEntry = {
-  id: 'q_1',
-  claimId: 'c_1',
-  parcelName: 'North Field',
-  crop: 'Rice',
+// Shared claim fixture. Every admin payload derives from this so the fixtures stay consistent
+// with the real API contract in `types.ts` rather than drifting into a shape of their own.
+const LOSS_CLAIM: LossClaim = {
+  id: 'c_1',
+  parcelId: 'par_123',
+  parcelSnapshot: {
+    parcelId: 'par_123',
+    name: 'North Field',
+    crop: 'Rice',
+    parcelAreaAcres: 2.5,
+  },
   eventType: 'flood',
   eventDate: '2026-09-02',
+  claimedGeometry: {
+    type: 'Polygon',
+    coordinates: [[[78.9, 10.7], [78.91, 10.7], [78.91, 10.71], [78.9, 10.7]]],
+  },
   claimedAreaAcres: 2.5,
+  evidence: [],
   state: 'rejected',
+  submittedAt: null,
+  processedAt: '2026-09-03T00:00:00.000Z',
   decidedAt: '2026-09-03T00:00:00.000Z',
   createdAt: '2026-09-02T00:00:00.000Z',
+  updatedAt: '2026-09-03T00:00:00.000Z',
+  assessment: null,
 };
 
-const CLAIM_DETAIL: AdminClaimDetail = {
+const QUEUE_ENTRY: AdminQueueEntry = {
   id: 'c_1',
   parcelId: 'par_123',
   parcelName: 'North Field',
@@ -67,24 +84,63 @@ const CLAIM_DETAIL: AdminClaimDetail = {
   claimedAreaAcres: 2.5,
   state: 'rejected',
   decidedAt: '2026-09-03T00:00:00.000Z',
+  createdAt: '2026-09-02T00:00:00.000Z',
+  hasAppeal: false,
+  appealReason: null,
+  appealStatus: null,
+  aiFailed: false,
   decisionReason: 'Claimed area exceeds the parcel limit.',
 };
 
+const CLAIM_DETAIL: AdminClaimDetail = {
+  ...LOSS_CLAIM,
+  farmer: { cognitoSub: 'sub_1', email: 'farmer@example.com', name: 'Test Farmer' },
+  parcel: {
+    parcelId: 'par_123',
+    name: 'North Field',
+    crop: 'Rice',
+    calculatedAreaAcres: 2.5,
+    geometry: null,
+  },
+  evidenceUrls: [],
+  appeals: [],
+  audit: [],
+  adminActions: [],
+  meta: { requestedBy: 'sub_admin', requestedAt: '2026-09-05T00:00:00.000Z' },
+};
+
 const OVERRIDE_RESULT: OverrideResult = {
-  claimId: 'c_1',
-  fromState: 'rejected',
-  toState: 'verified',
-  overrideKey: 'ovr_1',
-  decidedAt: '2026-09-03T11:00:00.000Z',
-  applied: true,
+  claim: { ...LOSS_CLAIM, state: 'verified', decidedAt: '2026-09-03T11:00:00.000Z' },
+  adminAction: {
+    id: 'aa_1',
+    claimId: 'c_1',
+    action: 'override',
+    actorSub: 'sub_admin',
+    actorEmail: 'admin@example.com',
+    priorState: 'rejected',
+    targetState: 'verified',
+    reason: 'Manual review confirmed the area.',
+    adminNote: null,
+    approverSub: null,
+    appealId: null,
+    idempotencyKey: 'ovr_1',
+    metadata: {},
+    requestId: 'req_1',
+    createdAt: '2026-09-03T11:00:00.000Z',
+  },
+  resolvedAppeals: [],
+  idempotent: false,
 };
 
 const APPEAL_RESULT: Appeal = {
   id: 'ap_1',
-  claimId: 'c_1',
+  status: 'submitted',
   reason: 'Area was surveyed by hand.',
-  state: 'submitted',
+  statement: null,
+  evidence: [],
+  decision: null,
   createdAt: '2026-09-04T09:00:00.000Z',
+  resolvedAt: null,
 };
 
 interface RouteOverrides {
@@ -97,8 +153,16 @@ interface RouteOverrides {
   appealGet: Response;
 }
 
+const QUEUE_RESPONSE: AdminQueueResponse = {
+  items: [QUEUE_ENTRY],
+  total: 1,
+  page: 1,
+  limit: 20,
+  filters: { status: '', eventType: '', search: '', withAppeal: '', aiFailed: '' },
+};
+
 const defaultRoutes = (): RouteOverrides => ({
-  list: json(ok({ claims: [QUEUE_ENTRY] })),
+  list: json(ok(QUEUE_RESPONSE)),
   get: json(ok(CLAIM_DETAIL)),
   override: json(ok(OVERRIDE_RESULT), 202),
   dashboard: json(ok({ metrics: { total: 80, verified: 20, rejected: 31, appealCount: 7 } })),
@@ -147,10 +211,10 @@ afterEach(() => {
 });
 
 describe('admin review API — deterministic backend mock', () => {
-  it('lists the review queue and unwraps data.claims', async () => {
+  it('lists the review queue and unwraps data.items', async () => {
     installFetch();
     const res = await listAdminQueue({});
-    expect(res.claims[0].id).toBe('q_1');
+    expect(res.items[0].id).toBe('c_1');
     expect(log[0].method).toBe('GET');
   });
 
@@ -160,10 +224,14 @@ describe('admin review API — deterministic backend mock', () => {
     expect(res.state).toBe('rejected');
   });
 
-  it('applies an override and unwraps data.override', async () => {
+  it('applies an override and returns the updated claim', async () => {
     installFetch();
-    const res = await overrideClaim('c_1', { toState: 'verified', adminNote: 'Field visit on record.' });
-    expect(res.toState).toBe('verified');
+    const res = await overrideClaim('c_1', {
+      toState: 'verified',
+      reason: 'Field visit on record.',
+      overrideKey: 'ovr_1',
+    });
+    expect(res.claim.state).toBe('verified');
     expect(log[0].method).toBe('POST');
   });
 
