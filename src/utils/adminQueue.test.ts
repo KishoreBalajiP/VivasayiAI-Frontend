@@ -329,6 +329,7 @@ const queueEntry = (overrides: Partial<AdminQueueEntry> = {}): AdminQueueEntry =
   createdAt: '2026-09-02T08:00:00.000Z',
   hasAppeal: false,
   appealReason: null,
+  appealStatus: null,
   aiFailed: false,
   decisionReason: 'Out of the claimable area limit for this parcel.',
   ...overrides,
@@ -475,22 +476,39 @@ const adminDetail = (overrides: Partial<AdminClaimDetail> = {}): AdminClaimDetai
   const base: AdminClaimDetail = {
     id: 'claim_1',
     parcelId: 'parcel_1',
-    parcelName: 'North Field',
-    crop: 'Rice',
+    parcelSnapshot: {
+      parcelId: 'parcel_1',
+      name: 'North Field',
+      crop: 'Rice',
+      parcelAreaAcres: 2.5,
+    },
     eventType: 'flood',
     eventDate: '2026-09-02',
+    claimedGeometry: {
+      type: 'Polygon',
+      coordinates: [[[78.9, 10.7], [78.91, 10.7], [78.91, 10.71], [78.9, 10.7]]],
+    },
     claimedAreaAcres: 2.5,
     state: 'rejected',
+    submittedAt: null,
+    processedAt: '2026-09-03T10:00:00.000Z',
     decidedAt: '2026-09-03T10:00:00.000Z',
     createdAt: '2026-09-02T08:00:00.000Z',
-    district: 'Palpa',
-    aiFailed: false,
+    updatedAt: '2026-09-03T10:00:00.000Z',
+    evidence: [],
+    assessment: null,
     farmer: { cognitoSub: 'sub_farmer', email: null, name: null },
-    parcel: null,
+    parcel: {
+      parcelId: 'parcel_1',
+      name: 'North Field',
+      crop: 'Rice',
+      calculatedAreaAcres: 2.5,
+      geometry: null,
+    },
     evidenceUrls: [],
     appeals: [],
+    audit: [],
     adminActions: [],
-    decisionReason: null,
     meta: { requestedBy: 'sub_admin', requestedAt: '2026-09-03T10:00:00.000Z' },
     ...overrides,
   };
@@ -508,7 +526,16 @@ describe('admin detail affordances — the UI only "may do" what backend rules a
 
     const active = adminDetail({
       appeals: [
-        { id: 'appeal_1', claimId: 'claim_1', status: 'submitted', reason: 'Area disputed.', statement: null, createdAt: '2026-09-04T09:00:00.000Z', resolvedAt: null },
+        {
+          id: 'appeal_1',
+          status: 'submitted',
+          reason: 'Area disputed.',
+          statement: null,
+          evidence: [],
+          decision: null,
+          createdAt: '2026-09-04T09:00:00.000Z',
+          resolvedAt: null,
+        },
       ],
     });
     expect(hasActiveAppeal(active)).toBe(true);

@@ -5,6 +5,8 @@ import { toast } from 'sonner';
 import { ApiClientError, friendlyMessageKey } from '../api/client';
 import { validateImageFile } from '../utils/imageValidation';
 import { useClaimsViewport } from '../utils/claimResponsive';
+import { LazyParcelDrawMap } from './LazyParcelDrawMap';
+import { hasUsableGeometry } from '../utils/parcelGeometry';
 import {
   CLAIM_EVENT_TYPES,
   CLAIM_WIZARD_STEPS,
@@ -61,10 +63,14 @@ export const ClaimWizard = ({
   const canAdvance = stepCanAdvance(draft);
   const selectedParcel = parcels.find((p) => p.parcelId === draft.parcelId) ?? null;
 
-  // Auto-select single parcel and advance to event step
+  // Auto-select single parcel and advance to event step. Only a parcel that actually has a
+  // usable boundary is auto-selected, so a lone legacy parcel routes the farmer to draw one
+  // instead of silently claiming a missing geometry.
   useEffect(() => {
-    if (parcelsStatus === 'ready' && parcels.length === 1 && draft.step === 'parcel' && !draft.parcelId) {
-      const singleParcel = parcels[0];
+    if (parcelsStatus !== 'ready' || draft.step !== 'parcel' || draft.parcelId) return;
+    const claimable = parcels.filter(hasUsableGeometry);
+    if (claimable.length === 1) {
+      const singleParcel = claimable[0];
       dispatch({ type: 'select.parcel', parcelId: singleParcel.parcelId, geometry: singleParcel.geometry });
       dispatch({ type: 'next' });
     }
@@ -307,6 +313,8 @@ const ParcelStep = ({
   onAddFirstParcel?: () => void;
 }) => {
   const { t } = useTranslation();
+  // Only parcels with a real, well-formed boundary can back a claim.
+  const claimableParcels = parcels.filter(hasUsableGeometry);
   if (parcelsStatus === 'loading') {
     return (
       <div className="flex flex-col items-center gap-2 py-8 text-gray-500">
@@ -350,20 +358,43 @@ const ParcelStep = ({
       </div>
     );
   }
+  // Every parcel exists but none carries a usable boundary, so none can be claimed yet. Never
+  // substitute a fabricated polygon — send the farmer to draw one.
+  if (claimableParcels.length === 0) {
+    return (
+      <div className="flex flex-col items-center gap-4 py-8 text-center">
+        <MapPinned className="h-12 w-12 text-amber-500" />
+        <h3 className="text-lg font-bold text-gray-900">{t('noClaimableParcelsTitle')}</h3>
+        <p className="max-w-sm text-sm text-gray-600">{t('noClaimableParcelsBody')}</p>
+        <button
+          onClick={onManageFarm}
+          className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-green-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:from-emerald-700 hover:to-green-800"
+        >
+          <Map className="h-4 w-4" />
+          {t('manageFarmCta')}
+        </button>
+      </div>
+    );
+  }
   return (
     <StepShell title={t('selectParcel')}>
       <ul className="space-y-2">
         {parcels.map((parcel) => {
           const active = parcel.parcelId === selectedParcelId;
+          const usable = hasUsableGeometry(parcel);
           return (
             <li key={parcel.parcelId}>
               <button
-                onClick={() => onSelect(parcel)}
+                onClick={() => usable && onSelect(parcel)}
+                disabled={!usable}
                 aria-pressed={active}
+                aria-disabled={!usable}
                 className={`w-full rounded-xl border p-3 text-left transition ${
-                  active
-                    ? 'border-emerald-500 bg-emerald-50 ring-2 ring-emerald-100'
-                    : 'border-gray-200 bg-white hover:border-emerald-300'
+                  !usable
+                    ? 'cursor-not-allowed border-amber-200 bg-amber-50 opacity-80'
+                    : active
+                      ? 'border-emerald-500 bg-emerald-50 ring-2 ring-emerald-100'
+                      : 'border-gray-200 bg-white hover:border-emerald-300'
                 }`}
               >
                 <div className="flex items-center justify-between gap-2">
@@ -375,6 +406,9 @@ const ParcelStep = ({
                   </span>
                 </div>
                 {parcel.crop && <div className="mt-0.5 text-xs text-gray-500">{parcel.crop}</div>}
+                {!usable && (
+                  <div className="mt-1 text-xs text-amber-800">{t('parcelBoundaryMissingHint')}</div>
+                )}
               </button>
             </li>
           );
@@ -450,7 +484,11 @@ const DateStep = ({
   );
 };
 
-// ── Step: Affected area (honest boundary — map drawing is deferred, ADR-019 P8) ────────
+// ── Step: Affected area ───────────────────────────────────────────────────────────────
+// The affected area is a SEPARATE geometry from the parcel boundary: the parcel footprint is
+// stored on the FarmProfile, while this polygon only ever lives on the claim draft and is
+// submitted as the claim's `geometry`. The backend computes `claimedAreaAcres` from it and
+// the Phase 9 spatial engine decides containment/overlap — the map preview is advisory only.
 
 const AreaStep = ({
   parcel,
@@ -462,30 +500,52 @@ const AreaStep = ({
   onSelect: (geometry: ParcelRecord['geometry']) => void;
 }) => {
   const { t } = useTranslation();
+  const [draftGeometry, setDraftGeometry] = useState<ParcelRecord['geometry'] | null>(null);
+
   if (!parcel) {
     return <StepShell title={t('selectArea')}><p className="text-sm text-gray-600">{t('reviewReason_no_parcel')}</p></StepShell>;
   }
-  const selected = geometry != null;
+
+  const wholeParcelSelected =
+    geometry != null &&
+    JSON.stringify(geometry) === JSON.stringify(parcel.geometry);
+
   return (
     <StepShell title={t('selectArea')}>
       <button
         onClick={() => onSelect(parcel.geometry)}
-        aria-pressed={selected}
-        className={`w-full rounded-xl border p-4 text-left transition ${
-          selected ? 'border-emerald-500 bg-emerald-50 ring-2 ring-emerald-100' : 'border-gray-200 bg-white hover:border-emerald-300'
+        aria-pressed={wholeParcelSelected}
+        className={`mb-3 w-full rounded-xl border p-4 text-left transition ${
+          wholeParcelSelected ? 'border-emerald-500 bg-emerald-50 ring-2 ring-emerald-100' : 'border-gray-200 bg-white hover:border-emerald-300'
         }`}
       >
         <div className="flex items-center justify-between gap-2">
           <span className="font-semibold text-gray-900">
             {t('areaEntireParcel', { acres: parcel.calculatedAreaAcres })}
           </span>
-          {selected && <Check className="h-5 w-5 text-emerald-600" />}
+          {wholeParcelSelected && <Check className="h-5 w-5 text-emerald-600" />}
         </div>
         <p className="mt-1 text-xs text-gray-500">{t('areaEntireParcelDesc')}</p>
       </button>
-      <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-        {t('areaDeferredNote')}
-      </p>
+
+      <p className="mb-2 text-sm font-semibold text-gray-700">{t('areaDrawPrompt')}</p>
+      <LazyParcelDrawMap
+        value={draftGeometry}
+        label={t('areaDrawPrompt')}
+        compact
+        contextPolygon={parcel.geometry}
+        contextIsContainer
+        footerNote={t('areaServerAuthority')}
+        onChange={(polygon) => {
+          setDraftGeometry(polygon);
+          onSelect(polygon ?? parcel.geometry);
+        }}
+      />
+      {geometry != null && !wholeParcelSelected && (
+        <p className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+          {t('areaAffectedDrawn')}
+        </p>
+      )}
     </StepShell>
   );
 };

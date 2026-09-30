@@ -7,10 +7,10 @@ import {
   MapPin,
   Edit,
   Trash2,
-  Map,
   X,
   Check,
   ArrowLeft,
+  Map as MapIcon,
 } from 'lucide-react';
 import { ApiClientError, friendlyMessageKey } from '../api/client';
 import {
@@ -21,6 +21,8 @@ import {
   type CreateParcelInput,
   type UpdateParcelInput,
 } from '../api';
+import { LazyParcelDrawMap } from './LazyParcelDrawMap';
+import { hasUsableGeometry } from '../utils/parcelGeometry';
 import type { ParcelRecord } from '../types';
 
 interface ManageParcelsProps {
@@ -45,6 +47,8 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
   const [geometry, setGeometry] = useState<ParcelRecord['geometry'] | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // Read-only map view of a stored parcel boundary (View Map).
+  const [viewingParcel, setViewingParcel] = useState<ParcelRecord | null>(null);
 
   const loadParcels = useCallback(async () => {
     setStatus('loading');
@@ -185,7 +189,9 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
     }
   };
 
-  const renderParcelCard = (parcel: ParcelRecord) => (
+  const renderParcelCard = (parcel: ParcelRecord) => {
+    const usable = hasUsableGeometry(parcel);
+    return (
     <div key={parcel.parcelId} className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
@@ -193,9 +199,15 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
             <h3 className="truncate font-semibold text-gray-900">
               {parcel.name || t('parcelNameLabel')}
             </h3>
-            <span className="whitespace-nowrap text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
-              {t('parcelAreaAcresLabel', { acres: parcel.calculatedAreaAcres })}
-            </span>
+            {usable ? (
+              <span className="whitespace-nowrap text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                {t('parcelAreaAcresLabel', { acres: parcel.calculatedAreaAcres })}
+              </span>
+            ) : (
+              <span className="whitespace-nowrap text-xs text-amber-800 bg-amber-100 px-2 py-0.5 rounded">
+                {t('parcelBoundaryMissing')}
+              </span>
+            )}
           </div>
           {parcel.crop && (
             <div className="mt-1 flex items-center gap-1 text-sm text-gray-500">
@@ -203,8 +215,22 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
               <span>{t('parcelCropLabel')}: {parcel.crop}</span>
             </div>
           )}
+          {!usable && (
+            <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800">
+              {t('parcelBoundaryMissingHint')}
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {usable && (
+            <button
+              onClick={() => setViewingParcel(parcel)}
+              className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-emerald-700"
+              aria-label={t('viewMap')}
+            >
+              <MapIcon className="h-4 w-4" />
+            </button>
+          )}
           <button
             onClick={() => openEditModal(parcel)}
             className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-emerald-700"
@@ -228,6 +254,7 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
       </div>
     </div>
   );
+  };
 
   if (status === 'loading') {
     return (
@@ -389,33 +416,32 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
               />
             </div>
 
-            {/* BOUNDARY DRAWING PLACEHOLDER */}
+            {/* BOUNDARY — real MapLibre polygon editor. The backend validates the geometry
+                and recomputes the authoritative acreage on save; the map's own number is a
+                preview only. */}
             <div className="mb-6">
               <label className="block text-sm font-semibold text-gray-700 mb-1">
                 {t('drawingBoundary')}
               </label>
-              <div
-                className={`relative rounded-xl border-2 p-8 text-center ${
-                  geometry
-                    ? 'border-emerald-500 bg-emerald-50'
-                    : 'border-dashed border-gray-300 bg-gray-50'
-                }`}
-              >
-                {geometry ? (
-                  <div className="flex items-center justify-center gap-2 text-emerald-700">
-                    <Check className="h-5 w-5" />
-                    <span className="font-medium">{t('parcelAreaAcresLabel', { acres: 'calculated' })}</span>
-                  </div>
-                ) : (
-                  <div className="space-y-2 text-gray-500">
-                    <Map className="mx-auto h-10 w-10" />
-                    <p className="text-sm">{t('boundaryRequired')}</p>
-                    <p className="text-xs">Map drawing integration coming soon</p>
-                  </div>
-                )}
-              </div>
+              <LazyParcelDrawMap
+                key={editingParcel?.parcelId ?? 'new-parcel'}
+                value={geometry}
+                label={t('drawingBoundary')}
+                onChange={(polygon) => {
+                  setGeometry(polygon);
+                  setSubmitError(null);
+                }}
+              />
+              {/* While editing, show the area the BACKEND currently stores for this parcel (authoritative),
+                so the farmer can compare it against the live preview from the map. */}
+              {editingParcel && (
+                <p className="mt-2 flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                  <Check className="h-4 w-4" />
+                  {t('parcelAreaAcresLabel', { acres: editingParcel.calculatedAreaAcres })}
+                </p>
+              )}
               {submitError === 'boundaryRequired' && (
-                <p role="alert" className="text-sm text-red-600 mt-1">{t('boundaryRequired')}</p>
+                <p role="alert" className="mt-2 text-sm text-red-600">{t('boundaryRequired')}</p>
               )}
             </div>
 
@@ -439,6 +465,50 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
               >
                 {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
                 {isSubmitting ? t('savingProfile') : t(editingParcel ? 'updateProfile' : 'saveProfile')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* View Map — read-only render of a stored boundary */}
+      {viewingParcel && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('viewMap')}
+          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-emerald-950/50 p-4 backdrop-blur-sm"
+        >
+          <div className="my-6 w-full max-w-lg rounded-3xl bg-white p-5 shadow-2xl sm:p-6">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h3 className="truncate text-lg font-bold text-gray-800">
+                {viewingParcel.name || t('parcelNameLabel')}
+              </h3>
+              <button
+                onClick={() => setViewingParcel(null)}
+                aria-label={t('cancel')}
+                className="rounded-full p-1.5 text-gray-500 hover:bg-gray-100"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <LazyParcelDrawMap
+              key={`view-${viewingParcel.parcelId}`}
+              value={viewingParcel.geometry}
+              label={viewingParcel.name || t('viewMap')}
+              readOnly
+            />
+            <p className="mt-3 flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+              <Check className="h-4 w-4" />
+              {t('parcelAreaAcresLabel', { acres: viewingParcel.calculatedAreaAcres })}
+            </p>
+            <div className="mt-3 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setViewingParcel(null)}
+                className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800"
+              >
+                {t('close')}
               </button>
             </div>
           </div>

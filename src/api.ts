@@ -320,6 +320,15 @@ export const listParcels = async (): Promise<ParcelRecord[]> => {
   return envelope.data?.parcels ?? [];
 };
 
+// GET /profile/parcels/:parcelId — fetch a single owned parcel (404 when it is not the
+// caller's; ownership is derived from the Bearer token, never from the request).
+export const getParcel = async (parcelId: string): Promise<ParcelRecord> => {
+  const envelope = await request<{ parcel: ParcelRecord }>(
+    `/profile/parcels/${encodeURIComponent(parcelId)}`
+  );
+  return envelope.data.parcel;
+};
+
 export const createParcel = async (input: CreateParcelInput): Promise<ParcelRecord> => {
   const envelope = await request<{ parcel: ParcelRecord }>('/profile/parcels', {
     method: 'POST',
@@ -349,6 +358,17 @@ export const updateParcel = async (
 // DELETE /profile/parcels/:parcelId — delete a parcel from the caller's farm profile.
 export const deleteParcel = async (parcelId: string): Promise<void> => {
   await request(`/profile/parcels/${encodeURIComponent(parcelId)}`, { method: 'DELETE' });
+};
+
+// POST /profile/parcels/:parcelId/area — ask the BACKEND to recompute the authoritative
+// acreage from the parcel's stored geometry and return the refreshed parcel. This is the
+// only area value ever treated as truth; the client-side number is a preview only.
+export const recalculateParcelArea = async (parcelId: string): Promise<ParcelRecord> => {
+  const envelope = await request<{ parcel: ParcelRecord }>(
+    `/profile/parcels/${encodeURIComponent(parcelId)}/area`,
+    { method: 'POST' }
+  );
+  return envelope.data.parcel;
 };
 
 // ── /weather ──────────────────────────────────────────────────────────────────────────────
