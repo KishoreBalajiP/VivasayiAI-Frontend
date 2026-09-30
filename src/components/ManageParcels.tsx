@@ -26,9 +26,13 @@ import type { ParcelRecord } from '../types';
 interface ManageParcelsProps {
   onClose: () => void;
   onParcelsChange: () => void;
+  /** Open the Add Parcel modal as soon as the screen mounts (deep-link from the claim wizard). */
+  autoOpenAdd?: boolean;
+  /** Fired after a NEW parcel is successfully created (not on edit/delete). */
+  onParcelCreated?: () => void;
 }
 
-export const ManageParcels = ({ onClose, onParcelsChange }: ManageParcelsProps) => {
+export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelCreated }: ManageParcelsProps) => {
   const { t } = useTranslation();
   const [parcels, setParcels] = useState<ParcelRecord[]>([]);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -84,6 +88,18 @@ export const ManageParcels = ({ onClose, onParcelsChange }: ManageParcelsProps) 
     resetForm();
   };
 
+  // Deep-link: when the claim wizard sends the user straight into the Add Parcel form,
+  // open it as soon as the list has loaded (the modal is part of this screen's tree).
+  useEffect(() => {
+    if (!autoOpenAdd || status !== 'ready') return;
+    setName('');
+    setCrop('');
+    setGeometry(null);
+    setSubmitError(null);
+    setEditingParcel(null);
+    setShowAddModal(true);
+  }, [autoOpenAdd, status]);
+
   const validateForm = (): boolean => {
     if (!name.trim()) {
       setSubmitError('parcelNameRequired');
@@ -131,8 +147,11 @@ export const ManageParcels = ({ onClose, onParcelsChange }: ManageParcelsProps) 
       }
 
       closeModal();
-      loadParcels();
+      await loadParcels();
       onParcelsChange();
+      // A newly created parcel may unblock the claim wizard's empty state, so let the
+      // caller (claim wizard) return to itself and auto-select it.
+      if (!editingParcel) onParcelCreated?.();
     } catch (err) {
       if (err instanceof ApiClientError && err.status === 401) return;
       toast.error(

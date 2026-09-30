@@ -38,7 +38,7 @@ type ClaimsSubview =
   | { name: 'list' }
   | { name: 'new' }
   | { name: 'detail'; claimId: string }
-  | { name: 'manageParcels' }
+  | { name: 'manageParcels'; autoOpenAdd?: boolean; returnToWizard?: boolean }
   | { name: 'farmProfile'; existingProfile?: FarmProfile | null };
 
 export const ClaimsPage = ({ profile }: { profile: FarmProfile | null }) => {
@@ -75,6 +75,13 @@ export const ClaimsPage = ({ profile }: { profile: FarmProfile | null }) => {
     setParcelRetryKey(k => k + 1);
   }, []);
 
+  // Returning from the parcel manager into the claim wizard after a parcel was created:
+  // refresh the list so the wizard auto-selects the new (single) parcel and advances to step 2.
+  const handleManageParcelsCreated = useCallback(() => {
+    setParcelRetryKey(k => k + 1);
+    setSubview({ name: 'new' });
+  }, []);
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
       {subview.name === 'list' && (
@@ -93,6 +100,8 @@ export const ClaimsPage = ({ profile }: { profile: FarmProfile | null }) => {
           onUploadEvidence={async (claimId, file) => void uploadClaimEvidence(claimId, file)}
           onDone={(claim) => setSubview({ name: 'detail', claimId: claim.id })}
           onCancel={() => setSubview({ name: 'list' })}
+          onManageFarm={() => setSubview({ name: 'manageParcels' })}
+          onAddFirstParcel={() => setSubview({ name: 'manageParcels', autoOpenAdd: true, returnToWizard: true })}
         />
       )}
       {subview.name === 'detail' && (
@@ -104,7 +113,9 @@ export const ClaimsPage = ({ profile }: { profile: FarmProfile | null }) => {
       )}
       {subview.name === 'manageParcels' && (
         <ManageParcels
-          onClose={() => setSubview({ name: 'list' })}
+          autoOpenAdd={subview.autoOpenAdd}
+          onParcelCreated={subview.returnToWizard ? handleManageParcelsCreated : undefined}
+          onClose={() => setSubview(subview.returnToWizard ? { name: 'new' } : { name: 'list' })}
           onParcelsChange={handleParcelsChange}
         />
       )}
