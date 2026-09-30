@@ -133,6 +133,8 @@ export const ParcelDrawMap = ({
   const [problem, setProblem] = useState<GeometryProblemKey | null>(null);
   const [previewAcres, setPreviewAcres] = useState<number | null>(null);
   const [seededFor, setSeededFor] = useState<string | null>(null);
+  /** Context polygon already framed by `fitBounds`, so the farmer's panning is never overridden. */
+  const fittedContextRef = useRef<string | null>(null);
   /** Localized notice for the most recent search / device-location outcome. */
   const [mapNotice, setMapNotice] = useState<string | null>(null);
   const [locating, setLocating] = useState(false);
@@ -289,6 +291,24 @@ export const ParcelDrawMap = ({
     suppressRef.current = false;
     setSeededFor(seedKey);
   }, [ready, seedKey, seededFor, value, readOnly]);
+
+  // ── frame the parcel on the affected-area map ─────────────────────────────────────────────
+  // The affected-area map starts with nothing to seed, so nothing else ever calls `fitBounds`.
+  // Without this the farmer lands on the default regional view where a real farm parcel is a
+  // pixel or two wide: they cannot see what they are claiming, and a polygon drawn there is
+  // orders of magnitude larger than their field. Frame the container polygon once per context,
+  // and never again once a value exists (the seed effect above owns the framing from then on, so
+  // this cannot fight the farmer's own pan/zoom or refit after they draw).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || readOnly || !contextPolygon || value) return;
+    const contextKey = JSON.stringify(contextPolygon);
+    if (fittedContextRef.current === contextKey) return;
+    const bounds = boundsOf(contextPolygon);
+    if (!bounds) return;
+    fittedContextRef.current = contextKey;
+    map.fitBounds(bounds, { padding: 56, maxZoom: 17, duration: 0 });
+  }, [contextPolygon, ready, readOnly, value]);
 
   // ── read-only boundary (display-only maps render the stored polygon as a plain layer) ─────
   useEffect(() => {

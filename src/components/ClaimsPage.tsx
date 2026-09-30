@@ -17,6 +17,7 @@ import {
   listClaims,
   listParcels,
   resubmitClaim,
+  submitClaim,
   uploadClaimEvidence,
   verifyClaimRequest,
   withdrawClaim,
@@ -96,8 +97,9 @@ export const ClaimsPage = ({ profile }: { profile: FarmProfile | null }) => {
           parcels={parcels}
           parcelsStatus={parcelsStatus}
           onRetryParcels={() => setParcelRetryKey((k) => k + 1)}
-          onCreateClaim={async (input) => createClaim(input)}
-          onUploadEvidence={async (claimId, file) => void uploadClaimEvidence(claimId, file)}
+          onCreateClaim={createClaim}
+          onUploadEvidence={uploadClaimEvidence}
+          onSubmitClaim={submitClaim}
           onDone={(claim) => setSubview({ name: 'detail', claimId: claim.id })}
           onCancel={() => setSubview({ name: 'list' })}
           onManageFarm={() => setSubview({ name: 'manageParcels' })}
@@ -273,7 +275,7 @@ const ClaimDetail = ({ claimId, language, onBack }: ClaimDetailProps) => {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [verification, setVerification] = useState<VerificationDecision | null>(null);
-  const [busy, setBusy] = useState<'verify' | 'withdraw' | 'resubmit' | null>(null);
+  const [busy, setBusy] = useState<'submit' | 'verify' | 'withdraw' | 'resubmit' | null>(null);
   const [resultPolling, setResultPolling] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollCountRef = useRef(0);
@@ -327,6 +329,30 @@ const ClaimDetail = ({ claimId, language, onBack }: ClaimDetailProps) => {
     }, 3000);
     return () => clearPolling();
   }, [resultPolling, claimId]);
+
+  // Recovery path for a claim that exists but never reached `submitted` (an interrupted wizard
+  // or a submit that failed after the draft was created). Without this the claim is stranded in
+  // `draft` forever, because the backend refuses to verify anything that was never submitted.
+  const runSubmit = async () => {
+    if (busy) return;
+    setBusy('submit');
+    try {
+      const submitted = await submitClaim(claimId);
+      // Never claim success on a non-submitted state — the success toast is gated on the
+      // backend's own state so a partial/unchanged transition is reported as a failure.
+      if (submitted.state === 'submitted') {
+        toast.success(t('claimSubmittedToast'), { duration: 3000 });
+      } else {
+        toast.error(t('claimsLoadFailed'), { duration: 4000 });
+      }
+      void loadDetail();
+    } catch (err) {
+      if (err instanceof ApiClientError && err.status === 401) return;
+      toast.error(t(friendlyMessageKey(err instanceof ApiClientError ? err.status : 0)), { duration: 4000 });
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const runVerification = async () => {
     if (busy) return;
@@ -470,6 +496,16 @@ const ClaimDetail = ({ claimId, language, onBack }: ClaimDetailProps) => {
 
           {/* Farmer actions (backend-authoritative affordances) */}
           <div className="flex flex-wrap gap-2">
+            {model.canSubmit && (
+              <button
+                onClick={() => void runSubmit()}
+                disabled={busy !== null}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-green-700 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:from-emerald-700 hover:to-green-800 disabled:opacity-60"
+              >
+                {busy === 'submit' ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+                {t('submitClaim')}
+              </button>
+            )}
             {model.canVerify && (
               <button
                 onClick={() => void runVerification()}

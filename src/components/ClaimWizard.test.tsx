@@ -10,6 +10,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import '../i18n';
+import { ApiClientError } from '../api/client';
 
 vi.mock('../api/client', () => ({
   ApiClientError: class ApiClientError extends Error {
@@ -22,10 +23,18 @@ vi.mock('../api/client', () => ({
   friendlyMessageKey: () => 'genericError',
 }));
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
+
+// jsdom's Blob.arrayBuffer() is not dependable across versions, and image sniffing has its own
+// unit tests. Staging behaviour is what these tests exercise, so the sniffer is stubbed out.
+vi.mock('../utils/imageValidation', () => ({
+  validateImageFile: async () => ({ type: 'png' as const }),
+  MAX_IMAGE_BYTES: 5 * 1024 * 1024,
+}));
 
 // Stand-in map. `drawAffected` emits a polygon strictly INSIDE the parcel boundary, which is what
-// lets these tests tell an affected area apart from the whole parcel.
+// lets these tests tell an affected area apart from the whole parcel. `clearAffected` models the
+// farmer erasing their drawing, which must NOT silently promote the claim to the whole parcel.
 vi.mock('./LazyParcelDrawMap', () => ({
   LazyParcelDrawMap: ({
     value,
@@ -57,11 +66,15 @@ vi.mock('./LazyParcelDrawMap', () => ({
       >
         draw affected
       </button>
+      <button type="button" data-testid="map-clear-affected" onClick={() => onChange?.(null)}>
+        clear affected
+      </button>
     </div>
   ),
 }));
 
 import { ClaimWizard } from './ClaimWizard';
+import { toast } from 'sonner';
 import type { ClaimCreateInput, GeoJsonPolygon, LossClaim, ParcelRecord } from '../types';
 
 const PARCEL_SQUARE: GeoJSON.Polygon = {
@@ -94,6 +107,8 @@ const legacyParcel = (overrides: Partial<ParcelRecord> = {}): ParcelRecord =>
   parcel({ ...overrides, geometry: null as unknown as GeoJsonPolygon });
 
 const onCreateClaim = vi.fn();
+const onSubmitClaim = vi.fn();
+const onUploadEvidence = vi.fn();
 
 const renderWizard = (parcels: ParcelRecord[]) =>
   render(
@@ -102,7 +117,8 @@ const renderWizard = (parcels: ParcelRecord[]) =>
       parcelsStatus="ready"
       onRetryParcels={() => {}}
       onCreateClaim={onCreateClaim}
-      onUploadEvidence={async () => {}}
+      onUploadEvidence={onUploadEvidence}
+      onSubmitClaim={onSubmitClaim}
       onDone={() => {}}
       onCancel={() => {}}
       onManageFarm={() => {}}
@@ -115,9 +131,20 @@ const fakeClaim = {
   state: 'draft',
 } as unknown as LossClaim;
 
+const submittedClaim = {
+  id: 'claim-1',
+  state: 'submitted',
+} as unknown as LossClaim;
+
 beforeEach(() => {
   vi.clearAllMocks();
   onCreateClaim.mockResolvedValue(fakeClaim);
+  onSubmitClaim.mockResolvedValue(submittedClaim);
+  onUploadEvidence.mockResolvedValue({
+    uploadId: 'ev-server-1',
+    mediaType: 'image/png',
+    status: 'stored',
+  } as never);
 });
 
 /**
@@ -221,6 +248,148 @@ describe('affected area', () => {
 
     await waitFor(() => expect(onCreateClaim).toHaveBeenCalledTimes(1));
     expect((onCreateClaim.mock.calls[0][0] as ClaimCreateInput).geometry).toEqual(PARCEL_SQUARE);
+  });
+
+  it('blocks submission when the farmer erases their drawing instead of claiming the whole parcel', async () => {
+    const user = userEvent.setup();
+    renderWizard([parcel()]);
+
+    await advanceToAreaStep(user);
+    await user.click(screen.getByTestId('map-draw-affected'));
+    // The farmer erases the drawing. The wizard must go back to "no affected area selected" — it
+    // must NOT quietly fall back to the parcel boundary, which would inflate a 1.15-acre partial
+    // claim into the full 1.25-acre parcel.
+    await user.click(screen.getByTestId('map-clear-affected'));
+
+    expect(screen.getByRole('button', { name: /continue/i })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    await waitFor(() => expect(onCreateClaim).not.toHaveBeenCalled());
+    expect(onSubmitClaim).not.toHaveBeenCalled();
+  });
+});
+
+describe('submission lifecycle', () => {
+  it('moves the draft to submitted — the whole point of the wizard', async () => {
+    const user = userEvent.setup();
+    const onDone = vi.fn();
+    render(
+      <ClaimWizard
+        parcels={[parcel()]}
+        parcelsStatus="ready"
+        onRetryParcels={() => {}}
+        onCreateClaim={onCreateClaim}
+        onUploadEvidence={onUploadEvidence}
+        onSubmitClaim={onSubmitClaim}
+        onDone={onDone}
+        onCancel={() => {}}
+      />
+    );
+    await advanceToAreaStep(user);
+    await user.click(screen.getByTestId('map-draw-affected'));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /submit/i }));
+
+    await waitFor(() => expect(onSubmitClaim).toHaveBeenCalledTimes(1));
+    // Submitted against the claim the draft call returned — not a second, separate id.
+    expect(onSubmitClaim).toHaveBeenCalledWith('claim-1');
+    // Handing the detail view the SUBMITTED claim, never the stale draft object.
+    await waitFor(() => expect(onDone).toHaveBeenCalledWith(submittedClaim));
+  });
+
+  it('orders create → evidence → submit', async () => {
+    const user = userEvent.setup();
+    const order: string[] = [];
+    onCreateClaim.mockImplementation(async () => {
+      order.push('create');
+      return fakeClaim;
+    });
+    onUploadEvidence.mockImplementation(async () => {
+      order.push('evidence');
+      return { uploadId: 'ev-1', status: 'stored' } as never;
+    });
+    onSubmitClaim.mockImplementation(async () => {
+      order.push('submit');
+      return submittedClaim;
+    });
+
+    renderWizard([parcel()]);
+    await advanceToAreaStep(user);
+    await user.click(screen.getByTestId('map-draw-affected'));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    // Stage a photo while still on the evidence step.
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: {
+        files: [new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'a.png', { type: 'image/png' })],
+      },
+    });
+    await waitFor(() => expect(screen.getByText('a.png')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /submit/i }));
+
+    await waitFor(() => expect(order).toEqual(['create', 'evidence', 'submit']));
+    // The photo is uploaded against the claim the create call returned.
+    expect(onUploadEvidence).toHaveBeenCalledWith('claim-1', expect.any(File));
+  });
+
+  it('hands the draft to the detail view when submit fails, so it is recoverable', async () => {
+    const user = userEvent.setup();
+    const onDone = vi.fn();
+    onSubmitClaim.mockRejectedValue(new ApiClientError(500, 'genericError'));
+    render(
+      <ClaimWizard
+        parcels={[parcel()]}
+        parcelsStatus="ready"
+        onRetryParcels={() => {}}
+        onCreateClaim={onCreateClaim}
+        onUploadEvidence={onUploadEvidence}
+        onSubmitClaim={onSubmitClaim}
+        onDone={onDone}
+        onCancel={() => {}}
+      />
+    );
+    await advanceToAreaStep(user);
+    await user.click(screen.getByTestId('map-draw-affected'));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /submit/i }));
+
+    await waitFor(() => expect(onDone).toHaveBeenCalledWith(fakeClaim));
+    // Never claim success when the submit failed.
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it('never re-uploads evidence that already completed on a previous attempt', async () => {
+    const user = userEvent.setup();
+    onSubmitClaim.mockRejectedValue(new ApiClientError(500, 'genericError'));
+
+    renderWizard([parcel()]);
+    await advanceToAreaStep(user);
+    await user.click(screen.getByTestId('map-draw-affected'));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    // Now on the evidence step — stage a photo through the real file input.
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;    expect(fileInput).toBeTruthy();
+    fireEvent.change(fileInput, {
+      target: {
+        files: [new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'a.png', { type: 'image/png' })],
+      },
+    });
+    await waitFor(() => expect(screen.getByText('a.png')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /submit/i }));
+
+    await waitFor(() => expect(onUploadEvidence).toHaveBeenCalledTimes(1));
+
+    // Retry the wizard submit: the same evidence must not be presigned/uploaded twice.
+    await user.click(screen.getByRole('button', { name: /submit/i }));
+    await waitFor(() => expect(onSubmitClaim).toHaveBeenCalledTimes(2));
+    expect(onUploadEvidence).toHaveBeenCalledTimes(1);
   });
 });
 

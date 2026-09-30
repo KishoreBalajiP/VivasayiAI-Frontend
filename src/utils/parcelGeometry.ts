@@ -197,6 +197,34 @@ export function roundPreviewAcres(sqMeters: number): number {
 }
 
 /**
+ * PREVIEW acreage for an already-selected GeoJsonPolygon (the claim wizard's affected-area step
+ * holds the chosen polygon, not the raw MapLibre feature collection).
+ *
+ * Same authority caveat as `validateDrawnPolygon`: this is display-only feedback for the farmer
+ * BEFORE the claim exists. The backend recomputes `claimedAreaAcres` from the stored
+ * `claimedGeometry` on every write and the claim detail always renders that server value.
+ *
+ * Returns null when the polygon is unusable, so callers can render an em dash instead of a
+ * fabricated 0.
+ */
+export function previewAreaAcres(polygon: GeoJsonPolygon | null | undefined): number | null {
+  if (!polygon || polygon.type !== 'Polygon') return null;
+  const rings = polygon.coordinates;
+  if (!Array.isArray(rings) || rings.length === 0) return null;
+  const ring = rings[0];
+  if (!Array.isArray(ring) || ring.length < 4) return null;
+  if (!ring.every(isPosition)) return null;
+  const sqMeters = area(
+    turfFeature<Polygon>({
+      type: 'Polygon',
+      coordinates: [ring as unknown as Position[]],
+    }),
+  );
+  if (!Number.isFinite(sqMeters) || sqMeters <= 0) return null;
+  return roundPreviewAcres(sqMeters);
+}
+
+/**
  * Client-side containment check for the claim affected-area map: is every vertex of the
  * affected area inside the parcel polygon? Purely advisory feedback — the backend's
  * Phase 9 spatial verification remains authoritative and issues the real decision.
