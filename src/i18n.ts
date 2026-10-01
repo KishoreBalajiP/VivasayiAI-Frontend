@@ -373,6 +373,10 @@ allDeleted: 'All chats cleared successfully!',
       analyzingImage: 'Analyzing image...',
       imageOnlyPrompt: 'Please analyze this image of my crop and advise me.',
       imageUploadFailed: 'We couldn\'t process this image. Please try another image.',
+      aiServiceUnavailable:
+        'The AI service did not respond in time. Your image is still saved \u2014 please try again in a moment.',
+      verificationAiUnavailable:
+        'The AI verifier did not respond in time. Your claim is still saved \u2014 please try again in a moment.',
       diagnosisUnavailable: 'A crop diagnosis is not available for this image.',
       diagnosisUncertain: 'This diagnosis is uncertain. Please verify with your local agricultural officer.',
       unsupportedImage: 'Please attach a valid image up to 5 MB.',
@@ -1070,6 +1074,10 @@ micError: 'மைக்ரோஃபோன் பிழை',
       analyzingImage: 'படத்தை பகுப்பாய்வு செய்கிறது...',
       imageOnlyPrompt: 'என் பயிரின் இந்தப் படத்தைப் பகுப்பாய்வு செய்து எனக்கு ஆலோசனை வழங்குங்கள்.',
       imageUploadFailed: 'இந்தப் படத்தைச் செயலாக்க முடியவில்லை. வேறொரு படத்தை முயற்சிக்கவும்.',
+      aiServiceUnavailable:
+        'AI சேவை நேரத்தில் பதிலளிக்கவில்லை. உங்கள் படம் பாதுகாப்பாக உள்ளது — சிறிது நேரம் கழித்து மீண்டும் முயற்சிக்கவும்.',
+      verificationAiUnavailable:
+        'AI சோதனையாளர் நேரத்தில் பதிலளிக்கவில்லை. உங்கள் கோரிக்கை பாதுகாப்பாக உள்ளது — சிறிது நேரம் கழித்து மீண்டும் முயற்சிக்கவும்.',
       diagnosisUnavailable: 'இந்த படத்திற்கு பயிர் கண்டறிதல் கிடைக்கவில்லை.',
       diagnosisUncertain: 'இந்த கண்டறிதல் நிச்சயமற்றது. உங்கள் அருகிலுள்ள வேளாண்மை அலுவலரிடம் சரிபார்க்கவும்.',
       unsupportedImage: 'சரியான படத்தை இணைக்கவும் (அதிகபட்சம் 5 MB).',

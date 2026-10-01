@@ -236,7 +236,9 @@ export const ChatInterface = ({
               ? 'imageTooLarge'
               : turn.failure.phase === 'upload'
                 ? 'imageUploadFailed' // presign/PUT/complete rejected — the image was not accepted
-                : friendlyMessageKey(turn.failure.status); // upload OK; the /chat turn itself failed
+                : turn.failure.status >= 500
+                  ? 'aiServiceUnavailable' // /chat AI analysis failed (bounded timeout / provider); image is still stored
+                  : friendlyMessageKey(turn.failure.status); // 4xx other than 413
           setAttachError(errKey);
           return;
         }

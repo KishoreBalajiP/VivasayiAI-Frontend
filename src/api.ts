@@ -146,6 +146,11 @@ export const uploadImage = async (file: File): Promise<UploadResult> => {
 // uploadId. `/chat` is structurally unreachable with a missing/stale uploadId — if any step
 // of the upload (presign, direct S3 PUT, or complete) rejects, the message is never sent.
 // The discriminated result lets the composer pick the right friendly error per phase.
+//
+// AI-503 root cause fix: a `chat` phase failure with a sanitized 5xx (provider rejected or
+// hit the bounded AI timeout) is surfaced with a distinct `aiServiceUnavailable` message so
+// the user sees a recoverable error rather than a generic "server error" toast — the image
+// is still stored and the analysis can be retried.
 export type ImageTurnFailurePhase = 'upload' | 'chat';
 
 export interface ImageTurnFailure {
