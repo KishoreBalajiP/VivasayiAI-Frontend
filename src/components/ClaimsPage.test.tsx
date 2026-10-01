@@ -59,6 +59,7 @@ vi.mock('./ClaimEvidenceGallery', () => ({
 }));
 
 import { ClaimsPage } from './ClaimsPage';
+import { ApiClientError } from '../api/client';
 import type { ClaimState, LossClaim } from '../types';
 
 const claimFor = (state: ClaimState, overrides: Partial<LossClaim> = {}): LossClaim =>
@@ -162,5 +163,57 @@ describe('backend-authoritative areas', () => {
 
     const parcelRow = screen.getByText('Parcel area').closest('div')!;
     expect(parcelRow).toHaveTextContent('1.25');
+  });
+});
+
+// AI-503-FE5/FE6: a failing /verify (bounded AI timeout or provider error) must surface the
+// recoverable, claim-preserving message, issue exactly one request, never auto-retry, and never
+// fabricate a decision.
+describe('verification AI failure handling', () => {
+  const AI_UNAVAILABLE = /AI verifier did not respond in time/i;
+
+  it('surfaces the recoverable AI message on a 503 and never claims a decision', async () => {
+    const user = userEvent.setup();
+    mockGetClaim.mockResolvedValue(claimFor('submitted'));
+    mockListClaims.mockResolvedValue([claimFor('submitted')]);
+    mockVerify.mockRejectedValue(new ApiClientError(503, 'verificationAiUnavailable'));
+    await openClaim(user);
+
+    await user.click(screen.getByRole('button', { name: /run ai verification/i }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(vi.mocked(toast.error).mock.calls[0][0]).toMatch(AI_UNAVAILABLE);
+    // No success toast and no fabricated verification result panel.
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(screen.queryByText('Verification result')).not.toBeInTheDocument();
+  });
+
+  it('maps a 500 the same way and issues exactly one verify request (no auto-retry)', async () => {
+    const user = userEvent.setup();
+    mockGetClaim.mockResolvedValue(claimFor('submitted'));
+    mockListClaims.mockResolvedValue([claimFor('submitted')]);
+    mockVerify.mockRejectedValue(new ApiClientError(500, 'verificationAiUnavailable'));
+    await openClaim(user);
+
+    await user.click(screen.getByRole('button', { name: /run ai verification/i }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(vi.mocked(toast.error).mock.calls[0][0]).toMatch(AI_UNAVAILABLE);
+    expect(mockVerify).toHaveBeenCalledTimes(1);
+    expect(mockVerify).toHaveBeenCalledWith('c_1');
+  });
+
+  it('leaves a 429 on the rate-limit message and does not convert it to an AI failure', async () => {
+    const user = userEvent.setup();
+    mockGetClaim.mockResolvedValue(claimFor('submitted'));
+    mockListClaims.mockResolvedValue([claimFor('submitted')]);
+    mockVerify.mockRejectedValue(new ApiClientError(429, 'rateLimited'));
+    await openClaim(user);
+
+    await user.click(screen.getByRole('button', { name: /run ai verification/i }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(vi.mocked(toast.error).mock.calls[0][0]).not.toMatch(AI_UNAVAILABLE);
+    expect(mockVerify).toHaveBeenCalledTimes(1);
   });
 });

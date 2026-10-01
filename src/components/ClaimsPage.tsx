@@ -372,7 +372,13 @@ const ClaimDetail = ({ claimId, language, onBack }: ClaimDetailProps) => {
       void loadDetail();
     } catch (err) {
       if (err instanceof ApiClientError && err.status === 401) return;
-      toast.error(t(friendlyMessageKey(err instanceof ApiClientError ? err.status : 0)), { duration: 4000 });
+      // AI-503 root cause fix: a sanitized 5xx from /verify is most often the bounded AI
+      // timeout or a provider failure. Surface a recoverable, AI-specific message so the
+      // farmer knows the claim is still saved and can retry; never fall back to the generic
+      // `serverError` for a recoverable provider failure.
+      const status = err instanceof ApiClientError ? err.status : 0;
+      const key = status >= 500 ? 'verificationAiUnavailable' : friendlyMessageKey(status);
+      toast.error(t(key), { duration: 4000 });
     } finally {
       setBusy(null);
     }
