@@ -89,6 +89,23 @@ export const verifyClaimRequest = async (claimId: string): Promise<VerificationD
   return envelope.data.verification;
 };
 
+// GET /claims/:claimId/verification — persisted verification evidence summary (Phase 15).
+export const getClaimVerificationSummary = async (claimId: string): Promise<any> => {
+  const envelope = await request<{
+    verification: {
+      claimId: string;
+      foundationVersion: string;
+      persisted: Array<Record<string, unknown>>;
+      existing: Array<Record<string, unknown>>;
+      operativeSources: string[];
+      futureSources: string[];
+      statusVocabulary: string[];
+    };
+    claim?: unknown;
+  }>(`/claims/${claimId}/verification`);
+  return envelope.data.verification;
+};
+
 // ── /profile/parcels (the wizard's source of selectable farm parcels) ─────────────────────
 
 // GET /profile/parcels — the caller's parcels with authoritative calculatedAreaAcres.

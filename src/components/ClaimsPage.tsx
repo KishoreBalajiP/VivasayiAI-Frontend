@@ -14,6 +14,7 @@ import { ApiClientError, friendlyMessageKey } from '../api/client';
 import {
   createClaim,
   getClaim,
+  getClaimVerificationSummary,
   listClaims,
   listParcels,
   resubmitClaim,
@@ -275,6 +276,7 @@ const ClaimDetail = ({ claimId, language, onBack }: ClaimDetailProps) => {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [verification, setVerification] = useState<VerificationDecision | null>(null);
+  const [verificationChecks, setVerificationChecks] = useState<any>(null);
   const [busy, setBusy] = useState<'submit' | 'verify' | 'withdraw' | 'resubmit' | null>(null);
   const [resultPolling, setResultPolling] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -286,6 +288,11 @@ const ClaimDetail = ({ claimId, language, onBack }: ClaimDetailProps) => {
       const fetched = await getClaim(claimId);
       setClaim(fetched);
       setNotFound(false);
+      try {
+        setVerificationChecks(await getClaimVerificationSummary(claimId));
+      } catch {
+        // Verification summary may not exist yet; keep previous value.
+      }
     } catch (err) {
       if (err instanceof ApiClientError && err.status === 401) return; // auth layer
       if (err instanceof ApiClientError && err.status === 404) setNotFound(true);
@@ -320,6 +327,11 @@ const ClaimDetail = ({ claimId, language, onBack }: ClaimDetailProps) => {
         if (refreshed.assessment?.state || ['verified', 'partially_verified', 'rejected', 'out_of_limit', 'duplicate_area', 'more_evidence_required'].includes(refreshed.state)) {
           clearPolling();
           setClaim(refreshed);
+          try {
+            setVerificationChecks(await getClaimVerificationSummary(claimId));
+          } catch {
+            // ignore
+          }
           return;
         }
       } catch {
@@ -486,6 +498,28 @@ const ClaimDetail = ({ claimId, language, onBack }: ClaimDetailProps) => {
           {model.report.kind === 'none' && !model.hasResult && (model.state === 'submitted' || model.state === 'more_evidence_required') && (
             <div className="rounded-2xl border border-gray-100 bg-white p-4 text-sm text-gray-500 shadow-sm">
               {t('noDecisionYet')}
+            </div>
+          )}
+
+          {/* Verification checks summary (Phase 15 backend) */}
+          {verificationChecks && (
+            <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+              <h3 className="mb-2 text-sm font-bold text-gray-800">{t('verificationChecksTitle')}</h3>
+              <ul className="space-y-1">
+                {(verificationChecks.persisted || []).map((row: any) => (
+                  <li key={row.id} className="flex items-center justify-between text-sm">
+                    <span className="text-gray-600">{row.source}</span>
+                    <span className="font-semibold text-gray-900">{row.status}</span>
+                  </li>
+                ))}
+                {(verificationChecks.persisted || []).length === 0 &&
+                  (verificationChecks.existing || []).map((row: any, idx: number) => (
+                    <li key={idx} className="flex items-center justify-between text-sm">
+                      <span className="text-gray-600">{row.source}</span>
+                      <span className="font-semibold text-gray-900">{row.status}</span>
+                    </li>
+                  ))}
+              </ul>
             </div>
           )}
 

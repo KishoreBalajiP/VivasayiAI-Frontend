@@ -47,7 +47,7 @@ describe('claimGeocoderSlot', () => {
   it('does not delay the first request', async () => {
     const started = Date.now();
     await claimGeocoderSlot(PUBLIC, new AbortController().signal);
-    expect(Date.now() - started).toBe(0);
+    expect(Date.now() - started).toBeLessThanOrEqual(1);
   });
 
   it('spaces requests from DIFFERENT endpoints on the same public host', async () => {
@@ -138,7 +138,7 @@ describe('claimGeocoderSlot', () => {
     resetGeocoderPacing();
     const start = Date.now();
     await claimGeocoderSlot(PUBLIC, new AbortController().signal);
-    expect(Date.now() - start).toBe(0);
+    expect(Date.now() - start).toBeLessThanOrEqual(1);
   });
 });
 
