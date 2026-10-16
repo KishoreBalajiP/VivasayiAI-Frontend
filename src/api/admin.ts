@@ -5,8 +5,8 @@
 // `role` claim (requireRole('admin')); a farmer calling any of these receives 403 without
 // touching the underlying claim.
 //
-// The farmer appeal endpoints (/claims/:id/appeal) are included here for cohesion with the
-// admin exception workflow — the same claim the farmer appeals is the claim an admin reviews.
+// The farmer appeal endpoints (/claims/:id/appeal) live in the farmer module (src/api/claims.ts)
+// and are re-exported below for cohesion with the admin exception workflow.
 
 import { request } from './client';
 import { buildAdminQueryString } from '../utils/adminQueue';
@@ -14,8 +14,6 @@ import type {
   AdminClaimDetail,
   AdminQueueFilters,
   AdminQueueResponse,
-  Appeal,
-  AppealInput,
   DashboardResponse,
   InvestigationResponse,
   OverrideInput,
@@ -64,17 +62,6 @@ export const getInvestigation = async (rangeDays = 90): Promise<InvestigationRes
   return envelope.data;
 };
 
-// POST /claims/:claimId/appeal — farmer submits an appeal on an appealable engine decision.
-export const submitAppeal = async (claimId: string, input: AppealInput): Promise<Appeal> => {
-  const envelope = await request<{ appeal: Appeal }>(`/claims/${claimId}/appeal`, {
-    method: 'POST',
-    body: input,
-  });
-  return envelope.data.appeal;
-};
-
-// GET /claims/:claimId/appeal — the caller's appeal for the claim (404 when none / foreign).
-export const getAppeal = async (claimId: string): Promise<Appeal | null> => {
-  const envelope = await request<{ appeal: Appeal }>(`/claims/${claimId}/appeal`);
-  return envelope.data?.appeal ?? null;
-};
+// The farmer appeal calls (POST/GET /claims/:claimId/appeal) are farmer routes, so they live in
+// the farmer claims module; re-exported here for existing admin-side imports.
+export { submitAppeal, getAppeal } from './claims';

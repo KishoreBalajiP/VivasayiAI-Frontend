@@ -20,14 +20,23 @@
 import { previewAreaAcres } from './parcelGeometry';
 
 import type {
+  AppealableDecisionState,
   ClaimAssessment,
+  ClaimantRelationship,
   ClaimEvidenceEntry,
   ClaimState,
   EvidencePresign,
   GeoJsonPolygon,
   LossClaim,
   LossEventType,
+  OwnershipDocumentCategory,
+  OwnershipEvidenceStatus,
   ParcelRecord,
+  PendingVerificationComponent,
+  VerificationComponent,
+  VerificationComponentName,
+  VerificationComponentOutcome,
+  VerificationComponents,
   VerificationDecision,
   VerificationRuleCheck,
   VerificationRules,
@@ -71,6 +80,77 @@ export const EVIDENCE_MUTABLE_STATES: ClaimState[] = [
 ];
 
 // idempotencyKey required length by createClaimBody (8–64 chars, [A-Za-z0-9_-]).
+// Claimant relationship vocabulary (config/claimantEvidence.js CLAIMANT_RELATIONSHIPS).
+export const CLAIMANT_RELATIONSHIPS: ClaimantRelationship[] = [
+  'owner',
+  'joint_owner',
+  'tenant',
+  'authorised_cultivator',
+  'heir',
+];
+
+export const CLAIMANT_RELATIONSHIP_SET: ReadonlySet<string> = new Set(CLAIMANT_RELATIONSHIPS);
+
+// Documents each relationship is expected to attach (config/claimantEvidence.js
+// REQUIRED_CATEGORY_GROUPS; provisional backend policy, contract §1.1). A group is satisfied by
+// ANY of its categories; the relationship needs EVERY group. Display guidance only — the backend
+// decides what is missing and reports it through the claimant_rights component.
+export const RELATIONSHIP_DOCUMENT_GROUPS: Record<ClaimantRelationship, OwnershipDocumentCategory[][]> = {
+  owner: [['land_record', 'ownership_deed']],
+  joint_owner: [['land_record', 'ownership_deed']],
+  tenant: [['lease_agreement'], ['land_record', 'ownership_deed', 'tax_receipt']],
+  authorised_cultivator: [['authorization_letter']],
+  heir: [['land_record', 'ownership_deed'], ['identity_proof', 'other']],
+};
+
+// Ownership document categories (utils/ownershipEvidence.js OWNERSHIP_DOCUMENT_CATEGORIES).
+export const OWNERSHIP_DOCUMENT_CATEGORIES: OwnershipDocumentCategory[] = [
+  'land_record',
+  'ownership_deed',
+  'lease_agreement',
+  'authorization_letter',
+  'tax_receipt',
+  'identity_proof',
+  'other',
+];
+
+export const claimantRelationshipLabelKey = (relationship: string): string =>
+  `claimantRelationship_${relationship}`;
+
+export const ownershipCategoryLabelKey = (category: string): string => `ownershipCategory_${category}`;
+
+// Farmer wording for a document's review status. VERIFIED is reserved for an authoritative
+// provider that does not exist yet; it is still worded "Checked", never "official".
+export const ownershipStatusLabelKey = (status: OwnershipEvidenceStatus | string): string => {
+  switch (status) {
+    case 'AVAILABLE':
+    case 'VERIFIED':
+      return 'ownershipStatus_accepted';
+    case 'INSUFFICIENT':
+      return 'ownershipStatus_insufficient';
+    case 'INCONSISTENT':
+      return 'ownershipStatus_inconsistent';
+    case 'UNAVAILABLE':
+      return 'ownershipStatus_unavailable';
+    default:
+      return 'ownershipStatus_pending';
+  }
+};
+
+// Appeal eligibility (models/Appeal.js APPEAL_ELIGIBLE_STATES). Any other state → 409.
+export const APPEALABLE_CLAIM_STATES: AppealableDecisionState[] = [
+  'rejected',
+  'out_of_limit',
+  'duplicate_area',
+  'more_evidence_required',
+];
+
+export const canAppealClaim = (state: string): boolean =>
+  (APPEALABLE_CLAIM_STATES as string[]).includes(state);
+
+export const APPEAL_REASON_MIN = 10;
+export const APPEAL_REASON_MAX = 2000;
+
 export const IDEMPOTENCY_MIN_LENGTH = 8;
 export const IDEMPOTENCY_MAX_LENGTH = 64;
 
@@ -172,6 +252,7 @@ export const isValidIdempotencyKey = (key: string): boolean =>
 
 export type ClaimWizardStep =
   | 'parcel'
+  | 'relationship'
   | 'event'
   | 'date'
   | 'area'
@@ -180,6 +261,9 @@ export type ClaimWizardStep =
 
 export const CLAIM_WIZARD_STEPS: ClaimWizardStep[] = [
   'parcel',
+  // Optional: how the farmer relates to the land. Sent as `claimantRelationship` on create; it
+  // decides which ownership documents the backend expects.
+  'relationship',
   'event',
   'date',
   'area',
@@ -202,6 +286,8 @@ export interface StagedEvidence {
 export interface ClaimDraft {
   step: ClaimWizardStep;
   parcelId: string | null;
+  // null = not declared (the field is optional on POST /claims).
+  claimantRelationship: ClaimantRelationship | null;
   eventType: LossEventType | null;
   eventDate: string | null;
   geometry: GeoJsonPolygon | null;
@@ -212,6 +298,7 @@ export interface ClaimDraft {
 export const createEmptyDraft = (): ClaimDraft => ({
   step: 'parcel',
   parcelId: null,
+  claimantRelationship: null,
   eventType: null,
   eventDate: null,
   geometry: null,
@@ -290,6 +377,7 @@ export type WizardNavigation =
   | { type: 'next' }
   | { type: 'back' }
   | { type: 'select.parcel'; parcelId: string; geometry: GeoJsonPolygon }
+  | { type: 'select.relationship'; relationship: ClaimantRelationship | null }
   | { type: 'select.event'; eventType: LossEventType }
   | { type: 'select.date'; eventDate: string }
   // `null` means "no affected area selected". Clearing the drawing must clear the claim geometry,
@@ -311,6 +399,15 @@ export const wizardReducer = (draft: ClaimDraft, action: WizardNavigation): Clai
         ...draft,
         parcelId: action.parcelId,
         geometry: action.geometry,
+      };
+    case 'select.relationship':
+      // Only the backend vocabulary is accepted; null clears the (optional) answer.
+      return {
+        ...draft,
+        claimantRelationship:
+          action.relationship === null || CLAIMANT_RELATIONSHIP_SET.has(action.relationship)
+            ? action.relationship
+            : draft.claimantRelationship,
       };
     case 'select.event':
       return {
@@ -353,6 +450,8 @@ export const stepCanAdvance = (draft: ClaimDraft): boolean => {
   switch (draft.step) {
     case 'parcel':
       return Boolean(draft.parcelId && draft.geometry);
+    case 'relationship':
+      return true; // optional: the farmer may skip it
     case 'event':
       return draft.eventType !== null;
     case 'date':
@@ -566,6 +665,12 @@ export interface ClaimDetailAssessment {
   inFlightAreaAcres: number | null;
   overlapWarnings: Array<{ code: string; message: string; claims?: Array<{ claimId: string; siblingState: string; overlapAreaAcres?: number }>; overlapAreaAcres?: number }>;
   spatialEvaluated: boolean;
+  // ADR-020 additive surface (optional on legacy assessments).
+  held?: boolean;
+  pendingComponents?: PendingVerificationComponent[];
+  components?: VerificationComponents | null;
+  policyId?: string;
+  policyHash?: string | null;
 }
 
 export interface ClaimDetailViewModel {
@@ -597,6 +702,8 @@ export interface ClaimDetailViewModel {
   report:
     | { kind: 'none' }
     | { kind: 'processing'; claimState: ClaimState }
+    // No decision yet: a required component is unresolved and the claim stays `submitted`.
+    | { kind: 'held'; checklist: ComponentChecklistRow[]; pendingComponents: PendingVerificationComponent[] }
     | { kind: 'decision'; verification: VerificationDecision };
 }
 
@@ -625,15 +732,33 @@ export const claimDetailViewModel = (
   const assessment = claim.assessment
     ? stripAdminNote(claim.assessment)
     : null;
-  const report =
-    verification && verification.inProgress
+  // `held` wins over everything else: it is the backend saying "no decision", so neither a
+  // processing spinner nor a decision card may be shown. It comes from the live /verify
+  // response when there is one, otherwise from the persisted assessment. A held claim is always
+  // `submitted`; once the claim moved on (withdrawn, decided) a stale hold is ignored.
+  const heldSource = claim.state !== 'submitted'
+    ? null
+    : verification
+    ? verification.held
+      ? { components: verification.components, pending: verification.pendingComponents }
+      : null
+    : claim.assessment?.held
+      ? { components: claim.assessment.components, pending: claim.assessment.pendingComponents }
+      : null;
+  const report: ClaimDetailViewModel['report'] = heldSource
+    ? {
+        kind: 'held',
+        checklist: componentChecklist(heldSource.components ?? null, heldSource.pending ?? []),
+        pendingComponents: heldSource.pending ?? [],
+      }
+    : verification && verification.inProgress
       ? {
-          kind: 'processing' as const,
+          kind: 'processing',
           claimState: (verification.claimState ?? claim.state) as ClaimState,
         }
       : verification && verification.outcome !== null
-        ? { kind: 'decision' as const, verification }
-        : { kind: 'none' as const };
+        ? { kind: 'decision', verification }
+        : { kind: 'none' };
   return {
     id: claim.id,
     parcelId: claim.parcelId,
@@ -700,7 +825,8 @@ export interface VerificationResultModel {
   outcomeLabelKey: string | null;
   reason: string | null;
   rules: VerificationRules | null;
-  ruleRows: { name: string; labelKey: string; passed: boolean }[];
+  // `supportingOnly` rules (weather) are supporting evidence: shown without a pass/fail verdict.
+  ruleRows: { name: string; labelKey: string; passed: boolean; supportingOnly: boolean }[];
   approvedAreaAcres: number | null;
   claimedAreaAcres: number | null;
   parcelAreaAcres: number | null;
@@ -721,12 +847,21 @@ export interface VerificationResultModel {
 
 export const verificationRulesKey = (name: string): string => `claimRule_${name}`;
 
+// Engine rules that are supporting evidence only (contract §1.3: weather never decides a claim
+// on its own), so the UI never renders them as passed/failed.
+export const SUPPORTING_ONLY_RULES: ReadonlySet<string> = new Set(['weatherCheck']);
+
 export const verificationResultModel = (
   verification: VerificationDecision
 ): VerificationResultModel => {
   const ruleRows = Object.entries(verification.rules ?? {}).map(([name, check]) => {
     const passed = Boolean((check as VerificationRuleCheck | undefined)?.passed);
-    return { name, labelKey: verificationRulesKey(name), passed };
+    return {
+      name,
+      labelKey: verificationRulesKey(name),
+      passed,
+      supportingOnly: SUPPORTING_ONLY_RULES.has(name),
+    };
   });
   return {
     outcomeLabelKey: verification.outcome ? claimStateLabelKey(verification.outcome) : null,
@@ -765,4 +900,241 @@ export const viewModelHasSensitiveField = (model: unknown): boolean => {
     }
     return false;
   });
+};
+
+// ── ADR-020 component checklist (held claims) ──────────────────────────────────────────────
+// Turns the backend's per-component outcomes into farmer-facing rows using the contract §1.3
+// wording. Nothing here decides anything: it only chooses honest words for what the backend
+// reported. `unavailable` / `inconclusive` are never presented as failures, and satellite and
+// weather (supporting evidence) are never presented as failed.
+
+export const VERIFICATION_COMPONENT_ORDER: VerificationComponentName[] = [
+  'parcel_identity',
+  'claimant_rights',
+  'land_documents',
+  'geometry',
+  'overlap',
+  'photos',
+  'crop',
+  'satellite',
+  'weather',
+  'manual_review',
+];
+
+export const SUPPORTING_COMPONENTS: ReadonlySet<VerificationComponentName> = new Set([
+  'satellite',
+  'weather',
+]);
+
+// A specific thing the farmer is asked for (or that does not match), derived from reasonCodes.
+export type ComponentNeed =
+  | { kind: 'documents'; categories: OwnershipDocumentCategory[] }
+  | { kind: 'reason'; key: string };
+
+export interface ComponentChecklistRow {
+  name: VerificationComponentName;
+  labelKey: string;
+  outcome: VerificationComponentOutcome;
+  // i18n key for the status sentence (contract §1.3 wording).
+  statusKey: string;
+  tone: 'ok' | 'waiting' | 'action' | 'neutral' | 'mismatch';
+  required: boolean;
+  // The farmer can resolve this one (unverified/failed with actionableBy farmer).
+  farmerAction: boolean;
+  // Listed in pendingComponents: this is what is holding the claim.
+  blocking: boolean;
+  supportingOnly: boolean;
+  needs: ComponentNeed[];
+}
+
+const KNOWN_REASON_CODES: ReadonlySet<string> = new Set([
+  'no_registered_parcel',
+  'outside_registered_parcel',
+  'no_photographs',
+  'photo_quality_too_poor',
+  'ai_no_damage_detected',
+  'no_land_document',
+  'no_ownership_evidence',
+  'document_reviewed_insufficient',
+  'document_reviewed_inconsistent',
+  'duplicates_verified_claim',
+]);
+
+const MISSING_CATEGORY_PREFIX = 'missing_document_category:';
+
+// reasonCodes → what the farmer needs to provide / what does not match. Unknown codes are not
+// shown verbatim (they are identifiers, not sentences); a generic need stands in for them.
+export const componentNeeds = (reasonCodes: string[]): ComponentNeed[] => {
+  const needs: ComponentNeed[] = [];
+  let unknown = false;
+  for (const code of reasonCodes) {
+    if (code.startsWith(MISSING_CATEGORY_PREFIX)) {
+      const categories = code
+        .slice(MISSING_CATEGORY_PREFIX.length)
+        .split('|')
+        .filter((c): c is OwnershipDocumentCategory =>
+          (OWNERSHIP_DOCUMENT_CATEGORIES as string[]).includes(c)
+        );
+      if (categories.length > 0) needs.push({ kind: 'documents', categories });
+      else unknown = true;
+    } else if (KNOWN_REASON_CODES.has(code)) {
+      needs.push({ kind: 'reason', key: `verifyReason_${code}` });
+    } else if (!code.startsWith('relationship_')) {
+      // `relationship_<x>` only echoes the declared relationship; anything else unknown falls
+      // back to the generic need below when nothing more specific was found.
+      unknown = true;
+    }
+  }
+  if (needs.length === 0 && unknown) needs.push({ kind: 'reason', key: 'verifyReason_generic' });
+  return needs;
+};
+
+const rowStatus = (
+  outcome: VerificationComponentOutcome,
+  farmerAction: boolean
+): { statusKey: string; tone: ComponentChecklistRow['tone'] } => {
+  switch (outcome) {
+    case 'verified':
+      return { statusKey: 'componentStatus_verified', tone: 'ok' };
+    case 'unverified':
+      return farmerAction
+        ? { statusKey: 'componentStatus_unverified_farmer', tone: 'action' }
+        : { statusKey: 'componentStatus_unverified', tone: 'neutral' };
+    case 'pending':
+      return { statusKey: 'componentStatus_pending', tone: 'waiting' };
+    case 'requires_review':
+      return { statusKey: 'componentStatus_requires_review', tone: 'waiting' };
+    case 'unavailable':
+      return { statusKey: 'componentStatus_unavailable', tone: 'neutral' };
+    case 'inconclusive':
+      return { statusKey: 'componentStatus_inconclusive', tone: 'neutral' };
+    case 'failed':
+      return { statusKey: 'componentStatus_failed', tone: 'mismatch' };
+    default:
+      return { statusKey: 'componentStatus_pending', tone: 'waiting' };
+  }
+};
+
+// Build the ordered checklist. Rows are shown when they matter to the farmer: required ones,
+// the ones holding the claim, the ones the farmer can act on, and the outcome of every check
+// that actually ran. Optional checks that simply have not run yet are left out (noise).
+export const componentChecklist = (
+  components: VerificationComponents | null | undefined,
+  pendingComponents: PendingVerificationComponent[] = []
+): ComponentChecklistRow[] => {
+  const blockingNames = new Set(pendingComponents.map((p) => p.component));
+  const merged: Partial<Record<VerificationComponentName, VerificationComponent>> = {
+    ...(components ?? {}),
+  };
+  // A blocking component the snapshot does not describe still gets a row.
+  for (const pending of pendingComponents) {
+    if (!merged[pending.component]) {
+      merged[pending.component] = {
+        outcome: pending.outcome,
+        required: true,
+        authoritative: false,
+        actionableBy: pending.action === 'more_evidence_required' ? 'farmer' : 'reviewer',
+        reasonCodes: [],
+      };
+    }
+  }
+  const rows: ComponentChecklistRow[] = [];
+  for (const name of VERIFICATION_COMPONENT_ORDER) {
+    const component = merged[name];
+    if (!component) continue;
+    const supportingOnly = SUPPORTING_COMPONENTS.has(name);
+    // Supporting evidence is never a failure, whatever arrives (defensive; the backend already
+    // guarantees it).
+    const outcome: VerificationComponentOutcome =
+      supportingOnly && component.outcome === 'failed' ? 'inconclusive' : component.outcome;
+    const farmerAction =
+      component.actionableBy === 'farmer' && (outcome === 'unverified' || outcome === 'failed');
+    const blocking = blockingNames.has(name);
+    const notRunYet = outcome === 'unverified' && !farmerAction;
+    if (notRunYet && !component.required && !blocking) continue;
+    const { statusKey, tone } = rowStatus(outcome, farmerAction);
+    rows.push({
+      name,
+      labelKey: `verifyComponent_${name}`,
+      outcome,
+      statusKey,
+      tone,
+      required: Boolean(component.required),
+      farmerAction,
+      blocking,
+      supportingOnly,
+      needs: farmerAction ? componentNeeds(component.reasonCodes ?? []) : [],
+    });
+  }
+  return rows;
+};
+
+// ── Verification status polling (GET /claims/:claimId/verification) ──────────────────────
+// Contract §3: poll every 10 s or slower while the claim is `submitted`. The read may advance
+// one queued step server-side. Polling stops on a decision, on a hold (a hold only changes when
+// a person acts or the farmer adds evidence, so polling cannot resolve it), or after the budget.
+
+export const VERIFICATION_POLL_INTERVAL_MS = 10_000;
+export const VERIFICATION_POLL_MAX = 18; // ~3 minutes at 10 s
+
+const DECIDED_CLAIM_STATES: ReadonlySet<string> = new Set([
+  'verified',
+  'partially_verified',
+  'more_evidence_required',
+  'rejected',
+  'out_of_limit',
+  'duplicate_area',
+  'withdrawn',
+]);
+
+export type VerificationPollStatus = 'decided' | 'held' | 'continue';
+
+export const verificationPollStatus = (claim: LossClaim): VerificationPollStatus => {
+  if (claim.assessment?.state || DECIDED_CLAIM_STATES.has(claim.state)) return 'decided';
+  if (claim.assessment?.held) return 'held';
+  return 'continue';
+};
+
+export interface PollVerificationOptions {
+  load: () => Promise<LossClaim>;
+  onClaim?: (claim: LossClaim) => void;
+  isCancelled?: () => boolean;
+  wait?: (ms: number) => Promise<void>;
+  intervalMs?: number;
+  maxPolls?: number;
+}
+
+export type PollVerificationResult =
+  | { status: 'decided' | 'held'; claim: LossClaim; polls: number }
+  | { status: 'exhausted' | 'cancelled'; claim: LossClaim | null; polls: number };
+
+const defaultWait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+// Sequential poll loop: waits FIRST (the caller just got a fresh /verify answer), never overlaps
+// requests, treats a failed read as transient, and enforces both a floor on the interval and a
+// hard cap on the number of reads.
+export const pollVerificationUntilSettled = async ({
+  load,
+  onClaim,
+  isCancelled = () => false,
+  wait = defaultWait,
+  intervalMs = VERIFICATION_POLL_INTERVAL_MS,
+  maxPolls = VERIFICATION_POLL_MAX,
+}: PollVerificationOptions): Promise<PollVerificationResult> => {
+  const interval = Math.max(VERIFICATION_POLL_INTERVAL_MS, intervalMs);
+  let last: LossClaim | null = null;
+  for (let polls = 1; polls <= maxPolls; polls += 1) {
+    await wait(interval);
+    if (isCancelled()) return { status: 'cancelled', claim: last, polls: polls - 1 };
+    try {
+      last = await load();
+    } catch {
+      continue; // transient — try again on the next tick
+    }
+    if (isCancelled()) return { status: 'cancelled', claim: last, polls };
+    onClaim?.(last);
+    const status = verificationPollStatus(last);
+    if (status !== 'continue') return { status, claim: last, polls };
+  }
+  return { status: 'exhausted', claim: last, polls: maxPolls };
 };

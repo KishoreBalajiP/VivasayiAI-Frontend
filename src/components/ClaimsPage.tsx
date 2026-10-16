@@ -14,6 +14,7 @@ import { ApiClientError, friendlyMessageKey } from '../api/client';
 import {
   createClaim,
   getClaim,
+  getClaimVerification,
   listClaims,
   listParcels,
   resubmitClaim,
@@ -23,14 +24,20 @@ import {
   withdrawClaim,
 } from '../api/claims';
 import {
+  canAppealClaim,
   claimDetailViewModel,
+  claimantRelationshipLabelKey,
   formatClaimDate,
+  pollVerificationUntilSettled,
   resolveClaimsListState,
 } from '../utils/claimFlow';
 import { useClaimsViewport } from '../utils/claimResponsive';
 import { ClaimWizard } from './ClaimWizard';
 import { ClaimStateBadge, VerificationResultCard } from './ClaimStatusCard';
 import ClaimEvidenceGallery from './ClaimEvidenceGallery';
+import { ClaimComponentChecklist } from './ClaimComponentChecklist';
+import { ClaimOwnershipDocuments } from './ClaimOwnershipDocuments';
+import { ClaimAppealPanel } from './ClaimAppealPanel';
 import { FarmProfileEditor } from './FarmProfileEditor';
 import { ManageParcels } from './ManageParcels';
 import type { FarmProfile, LossClaim, ParcelRecord, VerificationDecision } from '../types';
@@ -267,8 +274,6 @@ interface ClaimDetailProps {
   onBack: () => void;
 }
 
-const MAX_RESULT_POLLS = 20;
-
 const ClaimDetail = ({ claimId, language, onBack }: ClaimDetailProps) => {
   const { t } = useTranslation();
   const [claim, setClaim] = useState<LossClaim | null>(null);
@@ -276,9 +281,8 @@ const ClaimDetail = ({ claimId, language, onBack }: ClaimDetailProps) => {
   const [notFound, setNotFound] = useState(false);
   const [verification, setVerification] = useState<VerificationDecision | null>(null);
   const [busy, setBusy] = useState<'submit' | 'verify' | 'withdraw' | 'resubmit' | null>(null);
-  const [resultPolling, setResultPolling] = useState(false);
-  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const pollCountRef = useRef(0);
+  // Bumped to (re)start the status poll; 0 = not polling.
+  const [pollRun, setPollRun] = useState(0);
 
   const loadDetail = useCallback(async () => {
     setLoading(true);
@@ -295,40 +299,40 @@ const ClaimDetail = ({ claimId, language, onBack }: ClaimDetailProps) => {
     }
   }, [claimId, t]);
 
+  // Quiet refresh (no full-page spinner) for child sections that changed the claim's evidence.
+  const refreshClaim = useCallback(async () => {
+    try {
+      setClaim(await getClaim(claimId));
+    } catch {
+      // keep the current view; the next explicit action re-reads the backend
+    }
+  }, [claimId]);
+
   useEffect(() => {
     void loadDetail();
-    return () => clearPolling();
   }, [loadDetail]);
 
-  const clearPolling = () => {
-    if (pollTimerRef.current) {
-      clearInterval(pollTimerRef.current);
-      pollTimerRef.current = null;
-    }
-    pollCountRef.current = 0;
-    setResultPolling(false);
-  };
-
-  // The verification may run asynchronously (inProgress). Poll the claim detail until a
-  // decision lands or the poll budget is exhausted — always reading the backend authority.
+  // The verification may still be running (inProgress). Poll GET /claims/:id/verification —
+  // the farmer status read with its own larger rate limit, which also advances one queued step
+  // per read — every 10 s with a bounded budget (contract §3). Stops on a decision or a hold;
+  // the persisted assessment then renders, so the stale in-progress response is dropped.
   useEffect(() => {
-    if (!resultPolling) return undefined;
-    pollTimerRef.current = setInterval(async () => {
-      pollCountRef.current += 1;
-      try {
-        const refreshed = await getClaim(claimId);
-        if (refreshed.assessment?.state || ['verified', 'partially_verified', 'rejected', 'out_of_limit', 'duplicate_area', 'more_evidence_required'].includes(refreshed.state)) {
-          clearPolling();
-          setClaim(refreshed);
-          return;
-        }
-      } catch {
-        // transient — continue polling
+    if (pollRun === 0) return undefined;
+    let cancelled = false;
+    void pollVerificationUntilSettled({
+      load: async () => (await getClaimVerification(claimId)).claim,
+      onClaim: (refreshed) => setClaim(refreshed),
+      isCancelled: () => cancelled,
+    }).then((result) => {
+      if (cancelled) return;
+      if (result.status === 'decided' || result.status === 'held') {
+        setVerification(null);
       }
-      if (pollCountRef.current >= MAX_RESULT_POLLS) clearPolling();
-    }, 3000);
-    return () => clearPolling();
-  }, [resultPolling, claimId]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [pollRun, claimId]);
 
   // Recovery path for a claim that exists but never reached `submitted` (an interrupted wizard
   // or a submit that failed after the draft was created). Without this the claim is stranded in
@@ -360,11 +364,14 @@ const ClaimDetail = ({ claimId, language, onBack }: ClaimDetailProps) => {
     try {
       const decision = await verifyClaimRequest(claimId);
       setVerification(decision);
-      if (decision.inProgress || decision.outcome === null) {
-        // Backend is still processing the decision — poll for it.
-        clearPolling();
-        pollCountRef.current = 0;
-        setResultPolling(true);
+      if (decision.held) {
+        // No decision yet: a required part of the claim is unresolved. The claim stays
+        // `submitted` (withdrawable) and the checklist shows what is waiting. Polling cannot
+        // resolve a hold — a reviewer or the farmer has to act — so none is started.
+        toast.info(t('verificationHeldToast'), { duration: 4000 });
+      } else if (decision.inProgress || decision.outcome === null) {
+        // Backend is still processing the decision — poll its status read for it.
+        setPollRun((n) => n + 1);
         toast.info(t('verificationRunning'), { duration: 3000 });
       } else {
         toast.success(t('verificationDone'), { duration: 3000 });
@@ -391,6 +398,7 @@ const ClaimDetail = ({ claimId, language, onBack }: ClaimDetailProps) => {
     try {
       await withdrawClaim(claimId);
       toast.success(t('withdrawToast'), { duration: 3000 });
+      setVerification(null);
       void loadDetail();
     } catch (err) {
       if (err instanceof ApiClientError && err.status === 401) return;
@@ -407,6 +415,7 @@ const ClaimDetail = ({ claimId, language, onBack }: ClaimDetailProps) => {
     try {
       await resubmitClaim(claimId);
       toast.success(t('resubmitToast'), { duration: 3000 });
+      setVerification(null);
       void loadDetail();
     } catch (err) {
       if (err instanceof ApiClientError && err.status === 401) return;
@@ -458,6 +467,12 @@ const ClaimDetail = ({ claimId, language, onBack }: ClaimDetailProps) => {
               <Row label={t('reviewEvent')} value={t(model.eventTypeLabelKey)} />
               <Row label={t('reviewDate')} value={formatClaimDate(model.eventDate, language)} />
               <Row label={t('claimedAreaLabel')} value={`${model.claimedAreaAcres} ${t('acre')}`} />
+              {claim.claimantRelationship && (
+                <Row
+                  label={t('claimantRelationshipLabel')}
+                  value={t(claimantRelationshipLabelKey(claim.claimantRelationship))}
+                />
+              )}
               <Row label={t('claimFiledOnLabel')} value={formatClaimDate(model.createdAt, language)} />
             </dl>
             {model.state === 'draft' && <p className="mt-3 text-xs text-gray-500">{t('draftHint')}</p>}
@@ -470,8 +485,9 @@ const ClaimDetail = ({ claimId, language, onBack }: ClaimDetailProps) => {
 
           {/* Verification result (only backend-decided outcomes) */}
           {model.report.kind === 'none' && model.hasResult && claim.assessment && (
-            <VerificationResultInline assessment={claim.assessment} />
+            <VerificationResultInline claim={claim} />
           )}
+          {model.report.kind === 'held' && <ClaimComponentChecklist rows={model.report.checklist} />}
           {model.report.kind === 'decision' && (
             <VerificationResultCard verification={model.report.verification} language={language} />
           )}
@@ -499,6 +515,18 @@ const ClaimDetail = ({ claimId, language, onBack }: ClaimDetailProps) => {
           {!model.canEditEvidence && (
             <p className="px-1 text-xs text-gray-500">{t('evidenceBlockedHint')}</p>
           )}
+
+          {/* Land ownership documents (manual review; never an official verification) */}
+          <ClaimOwnershipDocuments
+            claimId={claimId}
+            relationship={claim.claimantRelationship ?? null}
+            canAttach={model.state !== 'withdrawn'}
+            language={language}
+            onChanged={() => void refreshClaim()}
+          />
+
+          {/* Farmer appeal — only for decisions the backend allows to be appealed */}
+          {canAppealClaim(model.state) && <ClaimAppealPanel claimId={claimId} language={language} />}
 
           {/* Farmer actions (backend-authoritative affordances) */}
           <div className="flex flex-wrap gap-2">
@@ -557,14 +585,17 @@ const Row = ({ label, value }: { label: string; value: string }) => (
 );
 
 // Renders a persisted assessment directly from GET /claims/:id (the list never carries one).
-const VerificationResultInline = ({ assessment }: { assessment: LossClaim['assessment'] }) => {
+// Area numbers come from the claim itself (server-measured claimedAreaAcres and the frozen
+// parcel snapshot), never placeholders.
+const VerificationResultInline = ({ claim }: { claim: LossClaim }) => {
   const { i18n } = useTranslation();
+  const assessment = claim.assessment;
   if (!assessment || !assessment.state) return null;
   const decision: VerificationDecision = {
-    claimId: '',
+    claimId: claim.id,
     idempotent: true,
     inProgress: false,
-    claimState: (assessment.state as LossClaim['state']) ?? null,
+    claimState: claim.state,
     outcome: assessment.state,
     decision: assessment.state,
     reason: assessment.reason,
@@ -574,8 +605,8 @@ const VerificationResultInline = ({ assessment }: { assessment: LossClaim['asses
     weatherCorrelation: assessment.weatherCorrelation,
     decidedAt: assessment.decidedAt,
     decidedBy: assessment.decidedBy,
-    claimedAreaAcres: 0,
-    parcelAreaAcres: 0,
+    claimedAreaAcres: claim.claimedAreaAcres,
+    parcelAreaAcres: claim.parcelSnapshot?.parcelAreaAcres ?? null,
     evidenceVersion: null,
     engineVersion: null,
     // E9-S9 (Phase 9) additive surface — copied verbatim from the persisted assessment.
@@ -585,6 +616,12 @@ const VerificationResultInline = ({ assessment }: { assessment: LossClaim['asses
     inFlightAreaAcres: assessment.inFlightAreaAcres ?? null,
     overlapWarnings: assessment.overlapWarnings ?? [],
     spatialEvaluated: assessment.spatialEvaluated ?? false,
+    // ADR-020 additive surface.
+    held: assessment.held ?? false,
+    pendingComponents: assessment.pendingComponents ?? [],
+    components: assessment.components ?? null,
+    policyId: assessment.policyId,
+    policyHash: assessment.policyHash ?? null,
   };
   return <VerificationResultCard verification={decision} language={i18n.language === 'ta' ? 'ta' : 'en'} />;
 };

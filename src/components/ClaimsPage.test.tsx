@@ -16,17 +16,31 @@ beforeEach(() => {
   mockGetClaim.mockResolvedValue(claimFor('draft'));
   mockListClaims.mockResolvedValue([claimFor('draft')]);
   mockSubmitClaim.mockResolvedValue(claimFor('submitted'));
+  mockListOwnership.mockResolvedValue({ claimId: 'c_1', evidence: [], summary: {} });
+  mockGetAppeal.mockResolvedValue(null);
 });
 
-const { mockGetClaim, mockListClaims, mockSubmitClaim, mockVerify, mockWithdraw, mockResubmit } =
-  vi.hoisted(() => ({
-    mockGetClaim: vi.fn(),
-    mockListClaims: vi.fn(),
-    mockSubmitClaim: vi.fn(),
-    mockVerify: vi.fn(),
-    mockWithdraw: vi.fn(),
-    mockResubmit: vi.fn(),
-  }));
+const {
+  mockGetClaim,
+  mockListClaims,
+  mockSubmitClaim,
+  mockVerify,
+  mockWithdraw,
+  mockResubmit,
+  mockGetVerification,
+  mockListOwnership,
+  mockGetAppeal,
+} = vi.hoisted(() => ({
+  mockGetClaim: vi.fn(),
+  mockListClaims: vi.fn(),
+  mockSubmitClaim: vi.fn(),
+  mockVerify: vi.fn(),
+  mockWithdraw: vi.fn(),
+  mockResubmit: vi.fn(),
+  mockGetVerification: vi.fn(),
+  mockListOwnership: vi.fn(),
+  mockGetAppeal: vi.fn(),
+}));
 
 vi.mock('../api/client', () => ({
   ApiClientError: class ApiClientError extends Error {
@@ -49,8 +63,15 @@ vi.mock('../api/claims', () => ({
   withdrawClaim: mockWithdraw,
   resubmitClaim: mockResubmit,
   verifyClaimRequest: mockVerify,
+  getClaimVerification: mockGetVerification,
   uploadClaimEvidence: vi.fn(),
   listParcels: vi.fn().mockResolvedValue([]),
+  listOwnershipEvidence: mockListOwnership,
+  getOwnershipDocumentUrl: vi.fn(),
+  uploadOwnershipDocument: vi.fn(),
+  OWNERSHIP_DOCUMENT_ACCEPT: 'image/jpeg,image/png,image/webp',
+  getAppeal: mockGetAppeal,
+  submitAppeal: vi.fn(),
 }));
 
 // The gallery mints signed URLs; not the subject of these tests.
@@ -60,7 +81,7 @@ vi.mock('./ClaimEvidenceGallery', () => ({
 
 import { ClaimsPage } from './ClaimsPage';
 import { ApiClientError } from '../api/client';
-import type { ClaimState, LossClaim } from '../types';
+import type { ClaimAssessment, ClaimState, LossClaim, VerificationDecision } from '../types';
 
 const claimFor = (state: ClaimState, overrides: Partial<LossClaim> = {}): LossClaim =>
   ({
@@ -215,5 +236,228 @@ describe('verification AI failure handling', () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     expect(vi.mocked(toast.error).mock.calls[0][0]).not.toMatch(AI_UNAVAILABLE);
     expect(mockVerify).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── ADR-020 held claims, status polling and decided-claim rendering ───────────────────────
+
+const decisionFor = (overrides: Partial<VerificationDecision> = {}): VerificationDecision => ({
+  claimId: 'c_1',
+  idempotent: false,
+  inProgress: false,
+  claimState: 'submitted',
+  outcome: null,
+  decision: null,
+  reason: null,
+  rules: null,
+  approvedGeometry: null,
+  approvedAreaAcres: null,
+  verifiedAreaAcres: null,
+  remainingEligible: null,
+  previouslyVerifiedAcres: null,
+  inFlightAreaAcres: null,
+  overlapWarnings: [],
+  spatialEvaluated: false,
+  weatherCorrelation: null,
+  decidedAt: null,
+  decidedBy: null,
+  claimedAreaAcres: 1.4678,
+  parcelAreaAcres: 1.25,
+  evidenceVersion: null,
+  engineVersion: null,
+  ...overrides,
+});
+
+const heldDecision = () =>
+  decisionFor({
+    held: true,
+    pendingComponents: [{ component: 'claimant_rights', outcome: 'unverified', action: 'more_evidence_required' }],
+    components: {
+      claimant_rights: {
+        outcome: 'unverified',
+        required: true,
+        authoritative: false,
+        actionableBy: 'farmer',
+        reasonCodes: ['missing_document_category:lease_agreement', 'relationship_tenant'],
+      },
+      satellite: {
+        outcome: 'unavailable',
+        required: false,
+        authoritative: false,
+        actionableBy: 'system',
+        reasonCodes: ['satellite_unavailable_or_disabled'],
+      },
+      land_documents: {
+        outcome: 'inconclusive',
+        required: false,
+        authoritative: false,
+        actionableBy: 'system',
+        reasonCodes: ['document_consistent_not_authentic_proof'],
+      },
+    },
+    policyId: 'p-2026-10',
+    policyHash: 'abc',
+  });
+
+describe('held verification (no decision yet)', () => {
+  it('shows the component checklist instead of a running spinner or a decision', async () => {
+    const user = userEvent.setup();
+    mockGetClaim.mockResolvedValue(claimFor('submitted'));
+    mockListClaims.mockResolvedValue([claimFor('submitted')]);
+    mockVerify.mockResolvedValue(heldDecision());
+    await openClaim(user);
+
+    await user.click(screen.getByRole('button', { name: /run ai verification/i }));
+
+    const checklist = await screen.findByTestId('held-checklist');
+    expect(checklist).toHaveTextContent('No decision yet');
+    // Farmer-actionable wording names the missing document category.
+    expect(checklist).toHaveTextContent('We still need: Lease agreement');
+    // unavailable / inconclusive are never failures.
+    expect(checklist).toHaveTextContent('Could not be checked yet. This is not a problem with your claim.');
+    expect(checklist).toHaveTextContent('Not enough information. This does not count against you.');
+    expect(checklist).not.toHaveTextContent(/rejected|approved/i);
+    // No "running" state, no decision card, and no polling for a hold.
+    expect(screen.queryByText('The system is verifying your claim. This can take a moment.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Verification result')).not.toBeInTheDocument();
+    expect(screen.queryByText('No verification result yet.')).not.toBeInTheDocument();
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(mockGetVerification).not.toHaveBeenCalled();
+    // The claim is still submitted, so it can still be withdrawn.
+    expect(screen.getByRole('button', { name: /withdraw claim/i })).toBeInTheDocument();
+  });
+
+  it('renders the checklist from a persisted held assessment on load', async () => {
+    const user = userEvent.setup();
+    const held = heldDecision();
+    const assessment = {
+      approvedGeometry: null,
+      approvedAreaAcres: null,
+      aiAggregate: null,
+      weatherCorrelation: null,
+      rules: null,
+      state: null,
+      reason: null,
+      decidedAt: null,
+      decidedBy: null,
+      adminNote: null,
+      held: true,
+      pendingComponents: held.pendingComponents,
+      components: held.components,
+    } as ClaimAssessment;
+    mockGetClaim.mockResolvedValue(claimFor('submitted', { assessment }));
+    mockListClaims.mockResolvedValue([claimFor('submitted')]);
+    await openClaim(user);
+
+    expect(await screen.findByTestId('held-checklist')).toBeInTheDocument();
+  });
+});
+
+describe('verification status polling', () => {
+  it('polls GET /claims/:id/verification at 10 s and stops on a decision', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      mockGetClaim.mockResolvedValue(claimFor('submitted'));
+      mockListClaims.mockResolvedValue([claimFor('submitted')]);
+      mockVerify.mockResolvedValue(decisionFor({ inProgress: true, claimState: 'processing' }));
+      const decided = claimFor('rejected', {
+        assessment: {
+          approvedGeometry: null,
+          approvedAreaAcres: 0,
+          aiAggregate: null,
+          weatherCorrelation: null,
+          rules: { weatherCheck: { passed: false }, areaCheck: { passed: true } },
+          state: 'rejected',
+          reason: 'Photos do not show damage',
+          decidedAt: '2026-09-22T00:00:00.000Z',
+          decidedBy: 'engine',
+          adminNote: null,
+        },
+      });
+      mockGetVerification
+        .mockResolvedValueOnce({ verification: {}, claim: claimFor('processing') })
+        .mockResolvedValueOnce({ verification: {}, claim: decided });
+      await openClaim(user);
+
+      await user.click(screen.getByRole('button', { name: /run ai verification/i }));
+      await waitFor(() => expect(mockVerify).toHaveBeenCalledTimes(1));
+
+      // Nothing is read before the 10 s floor.
+      await vi.advanceTimersByTimeAsync(9_000);
+      expect(mockGetVerification).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1_500);
+      await waitFor(() => expect(mockGetVerification).toHaveBeenCalledTimes(1));
+      await vi.advanceTimersByTimeAsync(10_500);
+      await waitFor(() => expect(mockGetVerification).toHaveBeenCalledTimes(2));
+      expect(mockGetVerification).toHaveBeenCalledWith('c_1');
+
+      // Decided: the persisted result renders with the claim's real areas, and polling stops.
+      expect(await screen.findByText('Verification result')).toBeInTheDocument();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mockGetVerification).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('decided claim rendering', () => {
+  const rejected = () =>
+    claimFor('rejected', {
+      assessment: {
+        approvedGeometry: null,
+        approvedAreaAcres: 0,
+        aiAggregate: null,
+        weatherCorrelation: null,
+        rules: { weatherCheck: { passed: false }, areaCheck: { passed: true } },
+        state: 'rejected',
+        reason: 'Photos do not show damage',
+        decidedAt: '2026-09-22T00:00:00.000Z',
+        decidedBy: 'engine',
+        adminNote: null,
+      },
+    });
+
+  it('shows the claim\'s real claimed and parcel areas (no zero placeholders)', async () => {
+    const user = userEvent.setup();
+    mockGetClaim.mockResolvedValue(rejected());
+    mockListClaims.mockResolvedValue([rejected()]);
+    await openClaim(user);
+
+    const claimedResult = (await screen.findByText('Claimed area', { selector: 'dt.text-xs' })).closest('div')!;
+    expect(claimedResult).toHaveTextContent('1.4678');
+    const parcelResult = screen.getByText('Parcel area', { selector: 'dt.text-xs' }).closest('div')!;
+    expect(parcelResult).toHaveTextContent('1.25');
+  });
+
+  it('lists the weather rule as supporting info, never as passed or failed', async () => {
+    const user = userEvent.setup();
+    mockGetClaim.mockResolvedValue(rejected());
+    mockListClaims.mockResolvedValue([rejected()]);
+    await openClaim(user);
+
+    const weatherRow = (await screen.findByText('Weather check', { selector: 'span' })).closest('li')!;
+    expect(weatherRow).toHaveTextContent('Supporting info only');
+    expect(weatherRow).not.toHaveTextContent('Failed');
+    expect(weatherRow).not.toHaveTextContent('Passed');
+  });
+
+  it('offers an appeal on a rejected claim and none on a submitted one', async () => {
+    const user = userEvent.setup();
+    mockGetClaim.mockResolvedValue(rejected());
+    mockListClaims.mockResolvedValue([rejected()]);
+    const view = await openClaim(user);
+    expect(await screen.findByRole('button', { name: /appeal decision/i })).toBeInTheDocument();
+    expect(mockGetAppeal).toHaveBeenCalledWith('c_1');
+    view.unmount();
+
+    mockGetAppeal.mockClear();
+    mockGetClaim.mockResolvedValue(claimFor('submitted'));
+    mockListClaims.mockResolvedValue([claimFor('submitted')]);
+    await openClaim(user);
+    expect(screen.queryByRole('button', { name: /appeal decision/i })).not.toBeInTheDocument();
+    expect(mockGetAppeal).not.toHaveBeenCalled();
   });
 });

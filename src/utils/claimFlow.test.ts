@@ -316,7 +316,12 @@ describe('wizardReducer navigation', () => {
     expect(draft.step).toBe('parcel');
     draft = wizardReducer(draft, { type: 'select.parcel', parcelId: 'par_123', geometry: POLYGON });
     draft = wizardReducer(draft, { type: 'next' });
+    // The optional claimant-relationship step follows the parcel choice.
+    expect(draft.step).toBe('relationship');
+    draft = wizardReducer(draft, { type: 'next' });
     expect(draft.step).toBe('event');
+    draft = wizardReducer(draft, { type: 'back' });
+    expect(draft.step).toBe('relationship');
     draft = wizardReducer(draft, { type: 'back' });
     expect(draft.step).toBe('parcel');
     draft = wizardReducer(draft, { type: 'back' });
@@ -324,8 +329,8 @@ describe('wizardReducer navigation', () => {
   });
   it('does not advance beyond the final step', () => {
     let draft = createEmptyDraft();
-    // Advance through all six steps repeatedly; the last dispatch keeps the wizard pinned on review.
-    for (let _advanceCount = 0; _advanceCount < 6; _advanceCount += 1) {
+    // Advance through every step repeatedly; the last dispatch keeps the wizard pinned on review.
+    for (let _advanceCount = 0; _advanceCount < 7; _advanceCount += 1) {
       draft = wizardReducer(draft, { type: 'select.parcel', parcelId: 'par_123', geometry: POLYGON });
       draft = wizardReducer(draft, { type: 'select.event', eventType: 'flood' });
       draft = wizardReducer(draft, { type: 'select.date', eventDate: new Date().toISOString().slice(0, 10) });
@@ -420,6 +425,8 @@ describe('stepCanAdvance', () => {
     let d = createEmptyDraft();
     d = wizardReducer(d, { type: 'select.parcel', parcelId: 'par_123', geometry: POLYGON });
     d = wizardReducer(d, { type: 'next' });
+    expect(stepCanAdvance(d)).toBe(true); // relationship is optional
+    d = wizardReducer(d, { type: 'next' });
     expect(stepCanAdvance(d)).toBe(false); // event not chosen
     d = wizardReducer(d, { type: 'select.event', eventType: 'drought' });
     expect(stepCanAdvance(d)).toBe(true);
@@ -436,7 +443,7 @@ describe('stepCanAdvance', () => {
   it('evidence step is always advanceable (optional before submit)', () => {
     let d = createEmptyDraft();
     d = wizardReducer(d, { type: 'select.parcel', parcelId: 'par_123', geometry: POLYGON });
-    for (let i = 0; i < 4; i++) d = wizardReducer(d, { type: 'next' });
+    for (let i = 0; i < 5; i++) d = wizardReducer(d, { type: 'next' });
     expect(d.step).toBe('evidence');
     expect(stepCanAdvance(d)).toBe(true);
   });
