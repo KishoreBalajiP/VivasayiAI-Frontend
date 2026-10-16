@@ -10,15 +10,23 @@
 // uploadIds and signed URLs.
 
 import { ApiClientError, friendlyMessageKey, request } from './client';
+import { uploadImage } from '../api';
 import { detectImageType } from '../utils/imageValidation';
 import type {
+  Appeal,
+  AppealInput,
   ClaimAssessment,
   ClaimCreateInput,
   ClaimEvidenceEntry,
   EvidenceDeleteResult,
   EvidencePresign,
   EvidenceSignedUrl,
+  ClaimVerificationStatus,
   LossClaim,
+  OwnershipDocumentCategory,
+  OwnershipDocumentUrl,
+  OwnershipEvidence,
+  OwnershipEvidenceList,
   ParcelRecord,
   VerificationDecision,
   VerificationRules,
@@ -87,6 +95,87 @@ export const verifyClaimRequest = async (claimId: string): Promise<VerificationD
     { method: 'POST' }
   );
   return envelope.data.verification;
+};
+
+// GET /claims/:claimId/verification — the farmer-facing status read used for polling. Uses the
+// larger read rate limit (contract §2) and may advance ONE queued verification step on the
+// server, so polling makes progress; poll every 10 s or slower while the claim is `submitted`.
+// `claim` carries the same assessment (held / components / decision) GET /claims/:claimId does.
+export const getClaimVerification = async (claimId: string): Promise<ClaimVerificationStatus> => {
+  const envelope = await request<ClaimVerificationStatus>(`/claims/${claimId}/verification`);
+  return envelope.data;
+};
+
+// ── Appeals (farmer side: routes/claims.js → appeal.controller.js) ─────────────────────────
+
+// POST /claims/:claimId/appeal — appeal an eligible engine decision (rejected, out_of_limit,
+// duplicate_area, more_evidence_required; anything else is 409). Idempotent: an active appeal
+// is returned as-is.
+export const submitAppeal = async (claimId: string, input: AppealInput): Promise<Appeal> => {
+  const envelope = await request<{ appeal: Appeal }>(`/claims/${claimId}/appeal`, {
+    method: 'POST',
+    body: input,
+  });
+  return envelope.data.appeal;
+};
+
+// GET /claims/:claimId/appeal — the caller's latest appeal for the claim, or null. The backend
+// answers 200 `{ appeal: null }` when there is none (and for a foreign claim).
+export const getAppeal = async (claimId: string): Promise<Appeal | null> => {
+  const envelope = await request<{ appeal: Appeal | null }>(`/claims/${claimId}/appeal`);
+  return envelope.data?.appeal ?? null;
+};
+
+// ── Land ownership documents (routes/claims.js → ownership.controller.js) ─────────────────
+// The bytes travel through the generic private upload pipeline (/upload/presign → S3 PUT →
+// /upload/:uploadId/complete); POST /claims/:claimId/ownership then attaches the STORED upload
+// to the claim. That pipeline accepts only JPEG, PNG and WebP (presignUploadBody), so a document
+// must be photographed or scanned to an image — PDFs are refused by the backend.
+// Attaching is NOT verification: each document waits for a manual review.
+
+export const OWNERSHIP_DOCUMENT_ACCEPT = 'image/jpeg,image/png,image/webp';
+
+// GET /claims/:claimId/ownership — documents the farmer attached (never automated review cases).
+export const listOwnershipEvidence = async (claimId: string): Promise<OwnershipEvidenceList> => {
+  const envelope = await request<OwnershipEvidenceList>(`/claims/${claimId}/ownership`);
+  return envelope.data;
+};
+
+// POST /claims/:claimId/ownership — body { uploadId, documentCategory? }. Idempotent per upload.
+export const attachOwnershipEvidence = async (
+  claimId: string,
+  input: { uploadId: string; documentCategory?: OwnershipDocumentCategory }
+): Promise<OwnershipEvidence> => {
+  const envelope = await request<{ evidence: OwnershipEvidence }>(`/claims/${claimId}/ownership`, {
+    method: 'POST',
+    body: input,
+  });
+  return envelope.data.evidence;
+};
+
+// GET /claims/:claimId/ownership/:evidenceId/url — short-lived signed GET url for one document.
+export const getOwnershipDocumentUrl = async (
+  claimId: string,
+  evidenceId: string
+): Promise<OwnershipDocumentUrl> => {
+  const envelope = await request<OwnershipDocumentUrl>(
+    `/claims/${claimId}/ownership/${evidenceId}/url`
+  );
+  return envelope.data;
+};
+
+// Full flow: upload the image through the generic pipeline, then attach it to the claim. A
+// failure at any step rejects with ApiClientError (status preserved) and nothing is attached.
+export const uploadOwnershipDocument = async (
+  claimId: string,
+  file: File,
+  documentCategory?: OwnershipDocumentCategory
+): Promise<OwnershipEvidence> => {
+  const stored = await uploadImage(file);
+  return attachOwnershipEvidence(claimId, {
+    uploadId: stored.uploadId,
+    ...(documentCategory ? { documentCategory } : {}),
+  });
 };
 
 // ── /profile/parcels (the wizard's source of selectable farm parcels) ─────────────────────
@@ -163,7 +252,7 @@ const putFileToPresignedUrl = async (
       body: file,
       signal: controller.signal,
     });
-    if (!res.ok) throw new ApiClientError(res.status, friendlyMessageKey(res.status));
+    if (!res.ok) throw new ApiClientError(res.status, friendlyMessageKey(res.status, 'image'));
   } catch (error) {
     if (error instanceof ApiClientError) throw error;
     throw new ApiClientError(0, friendlyMessageKey(0));
@@ -190,7 +279,7 @@ export const uploadClaimEvidence = async (
   file: File
 ): Promise<ClaimEvidenceEntry> => {
   const contentType = await evidenceContentType(file);
-  if (!contentType) throw new ApiClientError(400, friendlyMessageKey(400));
+  if (!contentType) throw new ApiClientError(400, friendlyMessageKey(400, 'image'));
 
   const presign = await presignEvidence(claimId, {
     contentType,

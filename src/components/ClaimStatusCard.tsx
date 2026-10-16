@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { CheckCircle2, XCircle, Loader2, Info } from 'lucide-react';
 import type { ClaimState } from '../types';
 import {
   claimStateLabelKey,
@@ -47,7 +47,8 @@ export const ClaimStateBadge = ({ state, className = '' }: ClaimStateBadgeProps)
 // ── Verification result panel ──────────────────────────────────────────────────────────
 // Renders ONLY backend-declared decision fields. The outcome chip uses the shared claim-state
 // vocabulary (the verification outcome IS a claim state value). Rule checks are backend engine
-// reports shown as an explainable pass/fail list — never a client opinion.
+// reports shown as an explainable pass/fail list — never a client opinion. Supporting-only rules
+// (weather) are listed without a verdict.
 
 export interface VerificationResultCardProps {
   verification: VerificationDecision;
@@ -101,18 +102,26 @@ export const VerificationResultCard = ({
                 <span className="text-gray-600">
                   {t(hasRuleLabel(row.labelKey) ? row.labelKey : row.name)}
                 </span>
-                <span
-                  className={`inline-flex items-center gap-1 text-xs font-semibold ${
-                    row.passed ? 'text-emerald-700' : 'text-red-600'
-                  }`}
-                >
-                  {row.passed ? (
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                  ) : (
-                    <XCircle className="h-3.5 w-3.5" />
-                  )}
-                  {row.passed ? t('rulePassed') : t('ruleFailed')}
-                </span>
+                {row.supportingOnly ? (
+                  // Supporting evidence (weather) never passes or fails a claim on its own.
+                  <span className="inline-flex items-center gap-1 text-xs font-semibold text-gray-500">
+                    <Info className="h-3.5 w-3.5" />
+                    {t('ruleSupportingOnly')}
+                  </span>
+                ) : (
+                  <span
+                    className={`inline-flex items-center gap-1 text-xs font-semibold ${
+                      row.passed ? 'text-emerald-700' : 'text-red-600'
+                    }`}
+                  >
+                    {row.passed ? (
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                    ) : (
+                      <XCircle className="h-3.5 w-3.5" />
+                    )}
+                    {row.passed ? t('rulePassed') : t('ruleFailed')}
+                  </span>
+                )}
               </li>
             ))}
           </ul>

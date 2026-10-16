@@ -77,22 +77,57 @@ export class ApiClientError extends Error {
 
 // Maps an HTTP status (0 = network/timeout/abort) to an i18n key with a user-safe message.
 // Raw backend messages are never shown directly.
-export const friendlyMessageKey = (status: number): string => {
+//
+// `context: 'image'` marks an image-upload call: there a 413 is the backend's upload cap
+// (multer LIMIT_FILE_SIZE → "Image exceeds the maximum allowed size"). Anywhere else a 413 is
+// the generic oversized-JSON-body response (middlewares/error.js "entity.too.large"), so it
+// must not tell the farmer an image was too large.
+export const friendlyMessageKey = (status: number, context?: 'image'): string => {
   switch (status) {
+    case 400:
+      return 'badRequest';
     case 401:
       return 'authExpired';
+    case 403:
+      return 'forbidden';
     case 404:
       return 'notFound';
+    case 409:
+      return 'conflict';
     case 413:
-      // The backend enforces its upload cap via HTTP 413 (multer LIMIT_FILE_SIZE → ApiError
-      // "Image exceeds the maximum allowed size"). Specific enough to map app-wide.
-      return 'imageTooLarge';
+      return context === 'image' ? 'imageTooLarge' : 'fileTooLarge';
+    case 415:
+      // Unsupported content encoding/charset (middlewares/error.js) or an unsupported upload type.
+      return 'unsupportedType';
     case 429:
       return 'rateLimited';
+    case 503:
+      // The AI provider refused the call for quota or overload (chat.service maps it to 503).
+      return 'serviceBusy';
     case 0:
       return 'networkError';
     default:
       return 'serverError';
+  }
+};
+
+// POST /auth/google failure → i18n key. The backend returns distinct statuses (auth.service.js):
+// 401 code rejected/expired or ID token invalid, 403 email not verified, 409 email linked to a
+// different account, 502 identity provider unreachable. Everything else stays `loginFailed`.
+export const loginErrorKey = (status: number): string => {
+  switch (status) {
+    case 401:
+      return 'loginCodeRejected';
+    case 403:
+      return 'loginEmailNotVerified';
+    case 409:
+      return 'loginAccountConflict';
+    case 502:
+      return 'loginServiceUnavailable';
+    case 0:
+      return 'networkError';
+    default:
+      return 'loginFailed';
   }
 };
 

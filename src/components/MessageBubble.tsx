@@ -1,9 +1,18 @@
 import { useState } from 'react';
-import { Message } from '../types';
+import { Message, ChatSource } from '../types';
 import { useTranslation } from 'react-i18next';
 import { Sprout, MoreVertical, Trash2 } from 'lucide-react';
 import { DiagnosisCard } from './DiagnosisCard';
 import { PersistedChatImage } from './PersistedChatImage';
+
+// Several retrieved chunks often come from the same document; list each file once.
+const uniqueSourceNames = (sources: ChatSource[]): string[] => [
+  ...new Set(
+    sources
+      .map((source) => (typeof source?.filename === 'string' ? source.filename.trim() : ''))
+      .filter(Boolean)
+  ),
+];
 
 interface MessageBubbleProps {
   message: Message;
@@ -68,6 +77,15 @@ export const MessageBubble = ({ message, onRequestDelete }: MessageBubbleProps) 
         {/* BACKEND IMAGE DIAGNOSIS (image-turn assistant response) */}
         {!isUser && message.diagnosis && (
           <DiagnosisCard diagnosis={message.diagnosis} />
+        )}
+
+        {/* KNOWLEDGE SOURCES (text answers): file names the backend grounded the answer in.
+            Names only — the backend never returns chunk text or storage paths. */}
+        {!isUser && message.sources && message.sources.length > 0 && (
+          <div className="mt-2 border-t border-gray-100 pt-1.5 text-[12px] text-gray-500" data-testid="chat-sources">
+            <span className="font-semibold">{t('chatSourcesLabel')}: </span>
+            {uniqueSourceNames(message.sources).join(', ')}
+          </div>
         )}
 
         {/* TIMESTAMP */}
