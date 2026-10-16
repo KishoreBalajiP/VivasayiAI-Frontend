@@ -2,8 +2,10 @@ import { createContext, useContext, useState, useEffect, useRef, ReactNode, useC
 import { BackendAuthResponse, BackendUser, Language } from '../types';
 import { config } from '../config';
 import {
+  ApiClientError,
   clearAuthState,
   getAccessToken,
+  loginErrorKey,
   registerUnauthorizedHandler,
   request,
   setAccessToken,
@@ -149,14 +151,16 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       setAccessToken(result.accessToken);
       writeStored(USER_KEY, JSON.stringify(result.user));
       setUser(result.user);
-    } catch {
+    } catch (err) {
       // Full reset: the token and any stored user from a previous session must not survive
       // a failed exchange, otherwise the app would look logged-in against a dead token.
       removeStored(USER_KEY);
       clearAuthState();
       setAccessToken(null);
       setUser(null);
-      setAuthError('loginFailed');
+      // Distinct, farmer-safe messages per backend status (403 unverified email, 409 account
+      // linked elsewhere, 502 sign-in service down); anything else stays the generic message.
+      setAuthError(loginErrorKey(err instanceof ApiClientError ? err.status : -1));
     } finally {
       // Remove the temporary OAuth params from the URL (never leave the code/state visible).
       window.history.replaceState({}, document.title, window.location.pathname);

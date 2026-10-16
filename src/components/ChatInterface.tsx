@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, type ChangeEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import { useLocation } from '../context/LocationContext';
-import { Message, ImageAttachment } from '../types';
+import { Message, ImageAttachment, ParcelRecord } from '../types';
 import {
   Send,
   Image as ImageIcon,
@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { MessageBubble } from './MessageBubble';
 import { toViewMessages } from '../utils/sessionMessages';
-import { sendChatMessage, getChatSession, runImageTurn } from '../api';
+import { sendChatMessage, getChatSession, runImageTurn, listParcels } from '../api';
 import type { ChatResult } from '../api';
 import { ApiClientError, friendlyMessageKey } from '../api/client';
 import VoiceRecorder from './VoiceRecorder';
@@ -58,6 +58,10 @@ export const ChatInterface = ({
   const [isDeletingChat, setIsDeletingChat] = useState(false);
   // Real send stages backing the loader copy: upload → analyze (image only) → processing.
   const [sendStage, setSendStage] = useState<'idle' | 'uploading' | 'analyzing' | 'processing'>('idle');
+  // Optional "which parcel is this about" selector (contract §4.1). Offered only when the farmer
+  // has more than one parcel; '' = not specified (the backend resolves from the profile).
+  const [parcels, setParcels] = useState<ParcelRecord[]>([]);
+  const [selectedParcelId, setSelectedParcelId] = useState('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -106,6 +110,22 @@ export const ChatInterface = ({
   }, []);
 
   useEffect(() => setInput(''), [activeChatId]);
+
+  // Parcels for the selector. Best-effort: on any failure the selector is simply not shown and
+  // chat works exactly as before (parcelId is optional).
+  useEffect(() => {
+    let active = true;
+    listParcels()
+      .then((list) => {
+        if (active) setParcels(Array.isArray(list) ? list : []);
+      })
+      .catch(() => {
+        // selector stays hidden
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     const id = ++historyRequestId.current;
@@ -244,7 +264,9 @@ export const ChatInterface = ({
         }
         res = turn.data;
       } else {
-        res = await sendChatMessage(text, language, sessionIdAtSend);
+        res = await sendChatMessage(text, language, sessionIdAtSend, undefined, {
+          parcelId: selectedParcelId || null,
+        });
       }
 
       // The turn was accepted/completed. If the component unmounted or the user switched
@@ -272,6 +294,8 @@ export const ChatInterface = ({
           // Present only when the backend ran the image path (res.image); undefined for
           // text-only turns, so no empty/fake diagnosis card is ever rendered.
           diagnosis: res.image,
+          // Knowledge documents the answer was grounded in (text path only; may be empty).
+          sources: Array.isArray(res.sources) ? res.sources : undefined,
         },
       ]);
 
@@ -476,6 +500,25 @@ export const ChatInterface = ({
                 </span>
               </div>
             </div>
+          )}
+
+          {parcels.length > 1 && (
+            <label className="mb-2 flex items-center gap-2 text-xs text-gray-600">
+              <span className="shrink-0 font-semibold">{t('chatParcelLabel')}</span>
+              <select
+                value={selectedParcelId}
+                onChange={(e) => setSelectedParcelId(e.target.value)}
+                disabled={isProcessing}
+                className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-800 outline-none focus:border-emerald-400"
+              >
+                <option value="">{t('chatParcelAny')}</option>
+                {parcels.map((parcel) => (
+                  <option key={parcel.parcelId} value={parcel.parcelId}>
+                    {parcel.crop ? `${parcel.name} · ${parcel.crop}` : parcel.name}
+                  </option>
+                ))}
+              </select>
+            </label>
           )}
 
           <div className="flex items-center gap-1.5 rounded-2xl border border-gray-200 bg-white py-1 pl-1.5 pr-1.5 shadow-sm transition-shadow focus-within:border-emerald-400 focus-within:ring-2 focus-within:ring-emerald-100">

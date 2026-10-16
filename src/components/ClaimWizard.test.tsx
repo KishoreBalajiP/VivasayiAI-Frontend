@@ -422,3 +422,61 @@ describe('parcels without a usable boundary', () => {
     expect(screen.getByRole('button', { name: /continue/i })).toBeDisabled();
   });
 });
+
+describe('claimant relationship step (optional)', () => {
+  const walkToSubmit = async (user: ReturnType<typeof userEvent.setup>) => {
+    await advanceToAreaStep(user);
+    await user.click(screen.getByTestId('map-draw-affected'));
+    await user.click(screen.getByRole('button', { name: /continue/i })); // → evidence
+    await user.click(screen.getByRole('button', { name: /continue/i })); // → review
+  };
+
+  it('follows the parcel step and sends the chosen relationship on create', async () => {
+    const user = userEvent.setup();
+    renderWizard([parcel()]);
+
+    // The single parcel is auto-selected, which lands the farmer on the relationship question.
+    expect(await screen.findByText('How are you related to this land?')).toBeInTheDocument();
+    // Optional: Continue is available before answering.
+    expect(screen.getByRole('button', { name: /continue/i })).toBeEnabled();
+
+    const tenant = screen.getByRole('button', { name: /lease \(tenant\)/i });
+    await user.click(tenant);
+    expect(tenant).toHaveAttribute('aria-pressed', 'true');
+
+    await walkToSubmit(user);
+    // The review step repeats the answer.
+    expect(screen.getByText('I farm it on lease (tenant)')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /submit/i }));
+
+    await waitFor(() => expect(onCreateClaim).toHaveBeenCalledTimes(1));
+    const input = onCreateClaim.mock.calls[0][0] as ClaimCreateInput;
+    expect(input.claimantRelationship).toBe('tenant');
+  });
+
+  it('omits claimantRelationship entirely when the farmer skips the question', async () => {
+    const user = userEvent.setup();
+    renderWizard([parcel()]);
+    await screen.findByText('How are you related to this land?');
+
+    await walkToSubmit(user);
+    expect(screen.getByText('Not given')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /submit/i }));
+
+    await waitFor(() => expect(onCreateClaim).toHaveBeenCalledTimes(1));
+    const input = onCreateClaim.mock.calls[0][0] as ClaimCreateInput;
+    expect(input).not.toHaveProperty('claimantRelationship');
+  });
+
+  it('clears the answer when the selected option is tapped again', async () => {
+    const user = userEvent.setup();
+    renderWizard([parcel()]);
+    await screen.findByText('How are you related to this land?');
+
+    const owner = screen.getByRole('button', { name: /i own this land/i });
+    await user.click(owner);
+    expect(owner).toHaveAttribute('aria-pressed', 'true');
+    await user.click(owner);
+    expect(owner).toHaveAttribute('aria-pressed', 'false');
+  });
+});

@@ -299,7 +299,9 @@ describe('runImageTurn — image-only message fallback', () => {
     expect(chatCalls()[0].body).toMatchObject({ message: typed, language: 'ta', uploadId: 'up_x' });
   });
 
-  it('refuses an image turn with neither a message nor a fallback before any network call', async () => {
+  it('sends an image-only turn without a message when there is no text and no fallback', async () => {
+    // chatBody makes `message` optional when `uploadId` is present, so the turn is allowed: the
+    // upload runs and /chat receives the uploadId with no (empty) message field.
     installFetch(makeHandler());
 
     const turn = await runImageTurn({
@@ -308,8 +310,10 @@ describe('runImageTurn — image-only message fallback', () => {
       language: 'en',
     });
 
-    expect(turn).toEqual({ ok: false, failure: { phase: 'chat', status: 400 } });
-    expect(log).toHaveLength(0);
+    expect(turn.ok).toBe(true);
+    const body = chatCalls()[0].body as Record<string, unknown>;
+    expect(body).toMatchObject({ language: 'en', uploadId: 'up_x' });
+    expect(body).not.toHaveProperty('message');
   });
 });
 
@@ -337,5 +341,28 @@ describe('uploadImage — contentType resolution', () => {
     expect(failed).toBeInstanceOf(ApiClientError);
     expect((failed as ApiClientError).status).toBe(400);
     expect(log).toHaveLength(0);
+  });
+});
+
+describe('sendChatMessage — parcelId (contract §4.1)', () => {
+  it('sends the selected parcelId with a text turn', async () => {
+    installFetch(makeHandler());
+
+    await sendChatMessage('when should I irrigate?', 'ta', 'chat_1', undefined, { parcelId: 'par_2' });
+
+    expect(chatCalls()[0].body).toEqual({
+      message: 'when should I irrigate?',
+      language: 'ta',
+      chatId: 'chat_1',
+      parcelId: 'par_2',
+    });
+  });
+
+  it('omits parcelId when none is selected', async () => {
+    installFetch(makeHandler());
+
+    await sendChatMessage('hello', 'en', null, undefined, { parcelId: null });
+
+    expect(chatCalls()[0].body).not.toHaveProperty('parcelId');
   });
 });

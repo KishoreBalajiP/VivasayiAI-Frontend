@@ -79,7 +79,7 @@ export const ClaimEvidenceGallery = ({
       } catch (err) {
         if (err instanceof ApiClientError) {
           if (err.status === 401) return;
-          toast.error(t(friendlyMessageKey(err.status)), { duration: 4000 });
+          toast.error(t(friendlyMessageKey(err.status, 'image')), { duration: 4000 });
           return;
         }
         toast.error(t('imageUploadFailed'), { duration: 4000 });

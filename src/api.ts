@@ -1,7 +1,9 @@
 import { ApiClientError, friendlyMessageKey, request } from './api/client';
 import { detectImageType } from './utils/imageValidation';
 import type {
+  ChatMeta,
   ChatSessionRecord,
+  ChatSource,
   FarmProfile,
   FarmProfileInput,
   ImageAnalysisResult,
@@ -30,27 +32,42 @@ export interface ChatResult {
   // E3 image-turn fields — present only when the request carried an uploadId.
   uploadId?: string;
   image?: ImageAnalysisResult;
+  // Text path only (chat.service.js): the knowledge documents the answer was grounded in
+  // (file names; empty when nothing was retrieved) and diagnostics. The image path omits both.
+  sources?: ChatSource[];
+  meta?: ChatMeta;
 }
 
 interface ChatMessageInput {
-  message: string;
+  message?: string;
   language: 'en' | 'ta';
   chatId?: string;
   uploadId?: string;
+  parcelId?: string;
+}
+
+export interface ChatSendOptions {
+  // The parcel the question is about (contract §4.1). A parcel id that is not the caller's is
+  // ignored by the backend, not an error. Only the text path uses it today.
+  parcelId?: string | null;
 }
 
 export const sendChatMessage = async (
   message: string,
   language: string,
   chatId?: string | null,
-  uploadId?: string
+  uploadId?: string,
+  options: ChatSendOptions = {}
 ): Promise<ChatResult> => {
   const payload: ChatMessageInput = {
-    message,
     language: language === 'ta' ? 'ta' : 'en',
   };
+  // chatBody makes `message` optional only when an uploadId is attached; an empty string would
+  // fail its min(1) check, so it is omitted rather than sent blank.
+  if (message.trim()) payload.message = message;
   if (chatId) payload.chatId = chatId;
   if (uploadId) payload.uploadId = uploadId;
+  if (options.parcelId) payload.parcelId = options.parcelId;
 
   const envelope = await request<ChatResult>('/chat', { method: 'POST', body: payload });
   return envelope.data;
@@ -97,7 +114,7 @@ const putFileToPresignedUrl = async (
       body: file,
       signal: controller.signal,
     });
-    if (!res.ok) throw new ApiClientError(res.status, friendlyMessageKey(res.status));
+    if (!res.ok) throw new ApiClientError(res.status, friendlyMessageKey(res.status, 'image'));
   } catch (error) {
     if (error instanceof ApiClientError) throw error;
     throw new ApiClientError(0, friendlyMessageKey(0));
@@ -126,7 +143,7 @@ export const uploadImage = async (file: File): Promise<UploadResult> => {
   } else if (browserType.startsWith('image/')) {
     contentType = browserType;
   }
-  if (!contentType) throw new ApiClientError(400, friendlyMessageKey(400));
+  if (!contentType) throw new ApiClientError(400, friendlyMessageKey(400, 'image'));
 
   const presign = await request<PresignedUpload>('/upload/presign', {
     method: 'POST',
@@ -177,13 +194,11 @@ export const runImageTurn = async ({
   onUploaded?: () => void;
   fallbackMessage?: string;
 }): Promise<ImageTurnResult> => {
-  // The backend /chat contract requires a non-empty message ("" → 400 "Message is required").
-  // An image-only turn has no typed text, so the composer passes a localized image-analysis
-  // instruction as fallbackMessage; both empty is a caller bug and is refused before any work.
+  // POST /chat accepts an image turn without text (chatBody: `message` is optional when
+  // `uploadId` is present, and ChatSession stores image-only user turns). The composer still
+  // passes a localized image-analysis instruction as fallbackMessage because it steers the
+  // diagnosis prompt; when both are empty the turn is sent with the image alone.
   const effectiveMessage = message.trim() || (fallbackMessage ?? '').trim();
-  if (!effectiveMessage) {
-    return { ok: false, failure: { phase: 'chat', status: 400 } };
-  }
 
   let uploadId: string;
   try {

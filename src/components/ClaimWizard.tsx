@@ -8,11 +8,13 @@ import { useClaimsViewport } from '../utils/claimResponsive';
 import { LazyParcelDrawMap } from './LazyParcelDrawMap';
 import { hasUsableGeometry } from '../utils/parcelGeometry';
 import {
+  CLAIMANT_RELATIONSHIPS,
   CLAIM_EVENT_TYPES,
   CLAIM_WIZARD_STEPS,
   buildReviewSummary,
   canStageEvidence,
   claimEventLabelKey,
+  claimantRelationshipLabelKey,
   createEmptyDraft,
   formatClaimDate,
   generateIdempotencyKey,
@@ -24,7 +26,14 @@ import {
   type ClaimWizardStep,
   type StagedEvidence,
 } from '../utils/claimFlow';
-import type { ClaimCreateInput, ClaimEvidenceEntry, LossClaim, LossEventType, ParcelRecord } from '../types';
+import type {
+  ClaimantRelationship,
+  ClaimCreateInput,
+  ClaimEvidenceEntry,
+  LossClaim,
+  LossEventType,
+  ParcelRecord,
+} from '../types';
 
 export interface ClaimWizardProps {
   parcels: ParcelRecord[];
@@ -134,6 +143,8 @@ export const ClaimWizard = ({
           ? draft.idempotencyKey
           : generateIdempotencyKey(),
     };
+    // Optional: only sent when the farmer answered (the backend stores null otherwise).
+    if (draft.claimantRelationship) input.claimantRelationship = draft.claimantRelationship;
 
     setSubmitting(true);
     setSubmitError(null);
@@ -168,7 +179,7 @@ export const ClaimWizard = ({
         if (err instanceof ApiClientError && err.status === 401) return;
         anyEvidenceFailed = true;
         const errorKey =
-          err instanceof ApiClientError ? friendlyMessageKey(err.status) : 'imageUploadFailed';
+          err instanceof ApiClientError ? friendlyMessageKey(err.status, 'image') : 'imageUploadFailed';
         dispatch({ type: 'evidence.failed', key: entry.key, errorKey });
       }
     }
@@ -245,6 +256,12 @@ export const ClaimWizard = ({
 
       <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:p-5">
         {draft.step === 'parcel' && <ParcelStep parcels={parcels} parcelsStatus={parcelsStatus} onRetry={onRetryParcels} selectedParcelId={draft.parcelId} onSelect={(p) => dispatch({ type: 'select.parcel', parcelId: p.parcelId, geometry: p.geometry })} onManageFarm={onManageFarm} onAddFirstParcel={onAddFirstParcel} />}
+        {draft.step === 'relationship' && (
+          <RelationshipStep
+            selected={draft.claimantRelationship}
+            onSelect={(relationship) => dispatch({ type: 'select.relationship', relationship })}
+          />
+        )}
         {draft.step === 'event' && <EventStep selected={draft.eventType} onSelect={(eventType) => dispatch({ type: 'select.event', eventType })} />}
         {draft.step === 'date' && <DateStep value={draft.eventDate} onChange={(eventDate) => dispatch({ type: 'select.date', eventDate })} />}
         {draft.step === 'area' && <AreaStep parcel={selectedParcel} geometry={draft.geometry} onSelect={(geometry) => dispatch({ type: 'select.area', geometry })} />}
@@ -302,6 +319,8 @@ function stepTitleKey(step: ClaimWizardStep): string {
   switch (step) {
     case 'parcel':
       return 'Parcel';
+    case 'relationship':
+      return 'Relationship';
     case 'event':
       return 'Event';
     case 'date':
@@ -321,6 +340,8 @@ function stepLabelKey(step: ClaimWizardStep): string {
   switch (step) {
     case 'parcel':
       return 'stepParcel';
+    case 'relationship':
+      return 'stepRelationship';
     case 'event':
       return 'stepEvent';
     case 'date':
@@ -457,6 +478,46 @@ const ParcelStep = ({
           );
         })}
       </ul>
+    </StepShell>
+  );
+};
+
+// ── Step: Relationship to the land (optional) ───────────────────────────────────────────
+// Sent as `claimantRelationship`; it decides which ownership documents the backend expects
+// (a tenant needs a lease, not the owner's deed). Skipping is allowed — Continue stays enabled.
+
+const RelationshipStep = ({
+  selected,
+  onSelect,
+}: {
+  selected: ClaimantRelationship | null;
+  onSelect: (relationship: ClaimantRelationship | null) => void;
+}) => {
+  const { t } = useTranslation();
+  return (
+    <StepShell title={t('selectRelationship')}>
+      <p className="mb-3 text-xs text-gray-500">{t('relationshipStepHint')}</p>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" role="group" aria-label={t('selectRelationship')}>
+        {CLAIMANT_RELATIONSHIPS.map((relationship) => {
+          const active = selected === relationship;
+          return (
+            <button
+              key={relationship}
+              // Tapping the selected answer again clears it (the question is optional).
+              onClick={() => onSelect(active ? null : relationship)}
+              aria-pressed={active}
+              className={`rounded-xl border px-3 py-2.5 text-left text-sm font-semibold transition ${
+                active
+                  ? 'border-emerald-500 bg-emerald-50 text-emerald-900 ring-2 ring-emerald-100'
+                  : 'border-gray-200 bg-white text-gray-700 hover:border-emerald-300'
+              }`}
+            >
+              {t(claimantRelationshipLabelKey(relationship))}
+            </button>
+          );
+        })}
+      </div>
+      <p className="mt-3 text-xs text-gray-500">{t('relationshipOptionalNote')}</p>
     </StepShell>
   );
 };
@@ -718,6 +779,14 @@ const ReviewStep = ({
             </dd>
           </div>
         )}
+        <div className="flex justify-between gap-2">
+          <dt className="text-gray-500">{t('claimantRelationshipLabel')}</dt>
+          <dd className="text-right font-semibold text-gray-900">
+            {draft.claimantRelationship
+              ? t(claimantRelationshipLabelKey(draft.claimantRelationship))
+              : t('relationshipNotGiven')}
+          </dd>
+        </div>
         <div className="flex justify-between gap-2">
           <dt className="text-gray-500">{t('reviewEvent')}</dt>
           <dd className="text-right font-semibold text-gray-900">

@@ -47,7 +47,9 @@ describe('claimGeocoderSlot', () => {
   it('does not delay the first request', async () => {
     const started = Date.now();
     await claimGeocoderSlot(PUBLIC, new AbortController().signal);
-    expect(Date.now() - started).toBeLessThanOrEqual(1);
+    // Not throttled: far below the spacing interval. An exact 0 ms check failed under load from
+    // ordinary scheduling jitter (observed 5 ms).
+    expect(Date.now() - started).toBeLessThan(GEOCODER_MIN_INTERVAL_MS / 4);
   });
 
   it('spaces requests from DIFFERENT endpoints on the same public host', async () => {
@@ -138,7 +140,9 @@ describe('claimGeocoderSlot', () => {
     resetGeocoderPacing();
     const start = Date.now();
     await claimGeocoderSlot(PUBLIC, new AbortController().signal);
-    expect(Date.now() - start).toBeLessThanOrEqual(1);
+    // Same jitter-tolerant bound as the first-request test: must be far below the
+    // spacing interval, but not an exact 0 ms check that flakes under load.
+    expect(Date.now() - start).toBeLessThan(GEOCODER_MIN_INTERVAL_MS / 4);
   });
 });
 

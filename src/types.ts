@@ -31,6 +31,26 @@ export interface Message {
   // Backend-returned image diagnosis block (POST /chat image path). Present only on AI
   // messages produced from an image turn. Shape mirrors the backend response exactly.
   diagnosis?: ImageAnalysisResult;
+  // Knowledge documents the backend grounded a text answer in (POST /chat `sources`). Present
+  // only on AI messages from a live text turn; history reloads carry none (not persisted).
+  sources?: ChatSource[];
+}
+
+// POST /chat → `sources[]` (services/chat.service.js performRAG): file names only, never chunk
+// text or storage paths. Empty when nothing was retrieved.
+export interface ChatSource {
+  filename: string;
+}
+
+// POST /chat → `meta` (text path only; diagnostics). Typed for completeness, never rendered.
+export interface ChatMeta {
+  intent: string | null;
+  sufficient: boolean;
+  followUpSlot: 'crop' | 'district' | null;
+  loaded: unknown;
+  language: 'en' | 'ta' | null;
+  latencyMs: { context: number; rag: number; model: number; total: number };
+  tokens: unknown;
 }
 
 // ── IMAGE / DIAGNOSIS TYPES — mirror of the backend E3 upload + chat-image pipeline ──────
@@ -300,6 +320,66 @@ export interface ClaimAssessment {
   inFlightAreaAcres?: number | null;
   overlapWarnings?: OverlapWarning[];
   spatialEvaluated?: boolean;
+  // ADR-020 additive surface (claim.service.js serializeAssessment). `held` = a required
+  // component is unresolved: NO decision exists yet (state null, claim still `submitted`).
+  // Optional because assessments serialized before this change do not carry them.
+  held?: boolean;
+  pendingComponents?: PendingVerificationComponent[];
+  components?: VerificationComponents | null;
+  policyId?: string;
+  policyHash?: string | null;
+}
+
+// ── ADR-020 verification components (services/verificationComponents.js) ────────────────
+// One outcome per part of the claim, so the farmer sees WHICH part is unresolved and why.
+
+export type VerificationComponentName =
+  | 'parcel_identity'
+  | 'claimant_rights'
+  | 'land_documents'
+  | 'geometry'
+  | 'crop'
+  | 'satellite'
+  | 'photos'
+  | 'weather'
+  | 'overlap'
+  | 'manual_review';
+
+// `unavailable` / `inconclusive` are never failures; satellite and weather are never `failed`.
+export type VerificationComponentOutcome =
+  | 'verified'
+  | 'failed'
+  | 'unverified'
+  | 'unavailable'
+  | 'inconclusive'
+  | 'pending'
+  | 'requires_review';
+
+export interface VerificationComponent {
+  outcome: VerificationComponentOutcome;
+  required: boolean;
+  // false = not an official verification; the UI must never label it "official".
+  authoritative: boolean;
+  actionableBy: 'farmer' | 'reviewer' | 'system' | null;
+  // Stable identifiers, e.g. `missing_document_category:lease_agreement`, `outside_registered_parcel`.
+  reasonCodes: string[];
+  // Present on freshly resolved components only; stored decision snapshots omit it.
+  evidenceRefs?: Array<{
+    id: string;
+    source: string;
+    status: string;
+    updatedAt: string | null;
+    evidenceVersion: string | null;
+  }>;
+}
+
+export type VerificationComponents = Partial<Record<VerificationComponentName, VerificationComponent>>;
+
+// What is holding a claim (assessment.hold.blocking). `action` says who can resolve it.
+export interface PendingVerificationComponent {
+  component: VerificationComponentName;
+  outcome: VerificationComponentOutcome;
+  action: 'hold' | 'more_evidence_required';
 }
 
 // Engine rule report (claimVerificationEngine.service.js): each named check carries `passed`
@@ -324,6 +404,15 @@ export interface VerificationRules {
   [name: string]: VerificationRuleCheck | undefined;
 }
 
+// How the claimant relates to the land (config/claimantEvidence.js CLAIMANT_RELATIONSHIPS).
+// Decides which ownership documents the claim is expected to carry.
+export type ClaimantRelationship =
+  | 'owner'
+  | 'joint_owner'
+  | 'tenant'
+  | 'authorised_cultivator'
+  | 'heir';
+
 // Backend LossClaim as serialized (services/claim.service.js serializeClaim). `id` is the Mongo
 // id; `assessment` is present on GET /claims/:claimId and null in the list view.
 export interface LossClaim {
@@ -334,6 +423,8 @@ export interface LossClaim {
   eventDate: string;
   claimedGeometry: GeoJsonPolygon;
   claimedAreaAcres: number;
+  // null when the farmer did not declare one (and on claims created before the field existed).
+  claimantRelationship?: ClaimantRelationship | null;
   evidence: ClaimEvidenceEntry[];
   state: ClaimState;
   submittedAt: string | null;
@@ -352,6 +443,8 @@ export interface ClaimCreateInput {
   eventDate: string;
   geometry: GeoJsonPolygon;
   idempotencyKey: string;
+  // Optional; any value outside ClaimantRelationship is a 400.
+  claimantRelationship?: ClaimantRelationship;
 }
 
 // Data returned by POST /claims/:claimId/verify (serializeDecision) — the backend's
@@ -382,6 +475,120 @@ export interface VerificationDecision {
   parcelAreaAcres: number | null;
   evidenceVersion: string | null;
   engineVersion: string | null;
+  // ADR-020 additive (claimVerification.service.js serializeDecision). When `held` is true,
+  // `outcome` and `claimState`'s decision are null: do not show "approved" or "rejected".
+  held?: boolean;
+  pendingComponents?: PendingVerificationComponent[];
+  components?: VerificationComponents | null;
+  policyId?: string;
+  policyHash?: string | null;
+}
+
+// GET /claims/:claimId/verification → data. `verification` is the evidence-foundation view
+// (verificationEvidence.service.js getVerificationEvidenceView); `claim` is the same serialized
+// claim (with assessment) GET /claims/:claimId returns. The read may advance one queued step.
+export interface ClaimVerificationEvidenceRow {
+  id: string;
+  claimId: string;
+  source: string;
+  status: string;
+  confidence: number | null;
+  observedAt: string | null;
+  provider: string | null;
+  providerVersion: string | null;
+  evidenceVersion: string | null;
+  evaluationVersion: string | null;
+  reference: string | null;
+  metadata: Record<string, unknown>;
+  result: unknown;
+  operative: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ClaimVerificationStatus {
+  verification: {
+    claimId: string;
+    foundationVersion: string;
+    persisted: ClaimVerificationEvidenceRow[];
+    existing: unknown;
+    operativeSources: string[];
+    futureSources: string[];
+    statusVocabulary: string[];
+  };
+  claim: LossClaim;
+}
+
+// ── Land ownership documents (ownership.controller.js / ownershipEvidence.service.js) ────
+
+// Fixed category vocabulary (utils/ownershipEvidence.js OWNERSHIP_DOCUMENT_CATEGORIES).
+export type OwnershipDocumentCategory =
+  | 'land_record'
+  | 'ownership_deed'
+  | 'lease_agreement'
+  | 'authorization_letter'
+  | 'tax_receipt'
+  | 'identity_proof'
+  | 'other';
+
+// PENDING until an administrator reviews it; VERIFIED is reserved for an authoritative provider
+// that does not exist yet, so a manual acceptance is AVAILABLE (never "official").
+export type OwnershipEvidenceStatus =
+  | 'NOT_CHECKED'
+  | 'PENDING'
+  | 'AVAILABLE'
+  | 'VERIFIED'
+  | 'INSUFFICIENT'
+  | 'INCONSISTENT'
+  | 'UNAVAILABLE';
+
+// serializeOwnershipRow. `reference` is the stored document's uploadId (opaque).
+export interface OwnershipEvidence {
+  id: string;
+  claimId: string;
+  source: 'OWNERSHIP';
+  status: OwnershipEvidenceStatus;
+  reference: string | null;
+  metadata: {
+    parcelId?: string;
+    documentCategory?: OwnershipDocumentCategory;
+    mediaType?: string;
+    size?: number;
+    [key: string]: unknown;
+  };
+  result: unknown;
+  provider: string | null;
+  providerVersion: string | null;
+  evidenceVersion: string | null;
+  evaluationVersion: string | null;
+  observedAt: string | null;
+  operative: false;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// GET /claims/:claimId/ownership → data.
+export interface OwnershipEvidenceList {
+  claimId: string;
+  foundationVersion: string;
+  evidence: OwnershipEvidence[];
+  summary: {
+    total: number;
+    pending: number;
+    reviewed: number;
+    statusCounts: Record<string, number>;
+    authoritative: false;
+    verificationAvailable: false;
+  };
+}
+
+// GET /claims/:claimId/ownership/:evidenceId/url → data (uploadPresign.service.js
+// createImageViewUrl). `expiresIn` is in milliseconds.
+export interface OwnershipDocumentUrl {
+  uploadId: string;
+  mediaType: string;
+  signedUrl: string;
+  expiresIn: number;
 }
 
 export interface OverlapWarning {
@@ -426,7 +633,10 @@ export type AppealableDecisionState =
 
 // POST /claims/:claimId/appeal body — exactly the fields the backend accepts.
 export interface AppealInput {
+  // 10–2000 characters (appealBody).
   reason: string;
+  // Optional longer statement, up to 4000 characters.
+  statement?: string;
 }
 
 // Serialized farmer appeal as returned by POST /claims/:claimId/appeal and nested in the
