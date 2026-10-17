@@ -174,8 +174,9 @@ export const canResubmitClaim = (state: string): boolean => state === 'more_evid
 // in `draft` forever. The backend remains the authority and re-runs every submit-time check.
 export const canSubmitClaim = (state: string): boolean => state === 'draft';
 
-// The farmer may request backend verification while submitted, processing (running), or for a
-// claim awaiting more evidence. Terminal states never re-run (backend idempotency).
+// The states in which the backend accepts POST /claims/:id/verify. Kept for reviewer tooling and its
+// test only: the farmer UI no longer offers a verify action (plan B4); checks start on their own
+// after submit and the tracker only reads progress.
 export const canRequestVerification = (state: string): boolean =>
   state === 'submitted' || state === 'processing' || state === 'more_evidence_required';
 
@@ -231,7 +232,9 @@ export const validateClaimDate = (value: string | null | undefined): ClaimDateCh
 };
 
 // Generates an owner-scoped idempotency key conforming to createClaimBody's charset/length so a
-// dropped create response can never duplicate a claim. Persisted with the draft.
+// dropped create response can never duplicate a claim. It travels with the wizard draft (also
+// across a page reload, see claimDraftStorage.ts) and is replaced when a field sent on create
+// changes before the claim exists (wizardReducer).
 export const generateIdempotencyKey = (): string => {
   const rand =
     typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function'
@@ -245,19 +248,13 @@ export const isValidIdempotencyKey = (key: string): boolean =>
   key.length <= IDEMPOTENCY_MAX_LENGTH &&
   /^[A-Za-z0-9_-]+$/.test(key);
 
-// ── Claim wizard (frozen journey: Parcel → Event → Date → Affected Area → Evidence → Review) ──
+// ── Claim wizard (five steps: Parcel → Your land → Event → Evidence → Review) ───────────────
 //
-// The AI Verification and Result steps belong to the claim status view (ClaimStatusCard), not
-// to the draft wizard: verification needs a real claim + stored evidence on the backend.
+// Event holds the event type, the date and the affected area. Evidence holds the crop photos
+// (at least MIN_PHOTOS_TO_SUBMIT are required) and the optional land documents. Following the
+// claim after submit (checks, decision) belongs to the claim page, not to the wizard.
 
-export type ClaimWizardStep =
-  | 'parcel'
-  | 'relationship'
-  | 'event'
-  | 'date'
-  | 'area'
-  | 'evidence'
-  | 'review';
+export type ClaimWizardStep = 'parcel' | 'relationship' | 'event' | 'evidence' | 'review';
 
 export const CLAIM_WIZARD_STEPS: ClaimWizardStep[] = [
   'parcel',
@@ -265,26 +262,65 @@ export const CLAIM_WIZARD_STEPS: ClaimWizardStep[] = [
   // decides which ownership documents the backend expects.
   'relationship',
   'event',
-  'date',
-  'area',
   'evidence',
   'review',
 ];
 
+export const CLAIM_EVIDENCE_MAX = 10; // mirrors backend env default CLAIM_EVIDENCE_MAX_IMAGES
+
+// Land documents go through /upload (10 calls per MINUTE, 2 calls per document), so the wizard
+// keeps the batch small enough to finish inside one window.
+export const CLAIM_DOCUMENT_MAX = 5;
+
+// Every verification policy answers `more_evidence_required` for a claim without photos, and the
+// backend progress contract marks `add_photos` as required, so the wizard asks for one up front.
+export const MIN_PHOTOS_TO_SUBMIT = 1;
+
+export type StagedImageType = 'jpeg' | 'png' | 'webp' | null;
+
 // Staged evidence: plain metadata for pure logic. The File object is carried by the UI
-// alongside the key; uploads happen against the real claim after creation.
+// alongside the key; uploads happen against the real claim after creation. `missing_file`
+// marks an entry restored from a saved draft whose bytes are gone (File objects are never
+// stored), so the farmer must choose it again or remove it.
 export interface StagedEvidence {
   key: string;
   name: string;
   size: number;
-  detectedType: 'jpeg' | 'png' | 'webp' | null;
-  status: 'staged' | 'uploading' | 'uploaded' | 'failed';
+  detectedType: StagedImageType;
+  status: 'staged' | 'uploading' | 'uploaded' | 'failed' | 'missing_file';
   uploadId?: string;
   errorKey?: string;
 }
 
+export type StagedDocumentStatus =
+  | 'staged'
+  | 'uploading'
+  | 'uploaded'
+  | 'attaching'
+  | 'attached'
+  | 'failed'
+  | 'missing_file';
+
+// A land document: the image goes through /upload first (uploadId), then is attached to the
+// claim (evidenceId). Keeping the uploadId means a failed attach is retried without uploading the
+// same file again.
+export interface StagedDocument {
+  key: string;
+  name: string;
+  size: number;
+  detectedType: StagedImageType;
+  category: OwnershipDocumentCategory;
+  status: StagedDocumentStatus;
+  uploadId?: string;
+  evidenceId?: string;
+  errorKey?: string;
+  failedPhase?: 'upload' | 'attach';
+}
+
 export interface ClaimDraft {
   step: ClaimWizardStep;
+  // Furthest step the farmer has opened; `goto` (the review step's Edit links) never jumps past it.
+  reachedStep: ClaimWizardStep;
   parcelId: string | null;
   // null = not declared (the field is optional on POST /claims).
   claimantRelationship: ClaimantRelationship | null;
@@ -293,10 +329,16 @@ export interface ClaimDraft {
   geometry: GeoJsonPolygon | null;
   idempotencyKey: string | null;
   evidence: StagedEvidence[];
+  documents: StagedDocument[];
+  // Set once POST /claims succeeded. A retry then never creates again, and the fields that were
+  // sent on create (parcel, relationship, event, date, area) are locked: there is no update call,
+  // so an edit here would silently differ from the saved claim.
+  claimId: string | null;
 }
 
 export const createEmptyDraft = (): ClaimDraft => ({
   step: 'parcel',
+  reachedStep: 'parcel',
   parcelId: null,
   claimantRelationship: null,
   eventType: null,
@@ -304,14 +346,21 @@ export const createEmptyDraft = (): ClaimDraft => ({
   geometry: null,
   idempotencyKey: generateIdempotencyKey(),
   evidence: [],
+  documents: [],
+  claimId: null,
 });
-
-export const CLAIM_EVIDENCE_MAX = 10; // mirrors backend env default CLAIM_EVIDENCE_MAX_IMAGES
 
 export const canStageEvidence = (draft: ClaimDraft): boolean =>
   draft.evidence.length < CLAIM_EVIDENCE_MAX;
 
+export const canStageDocument = (draft: ClaimDraft): boolean =>
+  draft.documents.length < CLAIM_DOCUMENT_MAX;
+
 export type StagedEvidenceEntry = Omit<StagedEvidence, 'status' | 'key'> & { key?: string };
+
+export type StagedDocumentEntry = Omit<StagedDocument, 'status' | 'key' | 'uploadId' | 'evidenceId' | 'errorKey' | 'failedPhase'> & {
+  key?: string;
+};
 
 export const addStagedEvidence = (
   draft: ClaimDraft,
@@ -342,14 +391,14 @@ export const markStagedEvidenceUploaded = (
 ): ClaimDraft => ({
   ...draft,
   evidence: draft.evidence.map((e) =>
-    e.key === key ? { ...e, status: 'uploaded', uploadId } : e
+    e.key === key ? { ...e, status: 'uploaded', uploadId, errorKey: undefined } : e
   ),
 });
 
 export const markStagedEvidenceUploading = (draft: ClaimDraft, key: string): ClaimDraft => ({
   ...draft,
   evidence: draft.evidence.map((e) =>
-    e.key === key ? { ...e, status: 'uploading' } : e
+    e.key === key ? { ...e, status: 'uploading', errorKey: undefined } : e
   ),
 });
 
@@ -364,18 +413,33 @@ export const markStagedEvidenceFailed = (
   ),
 });
 
-const cryptoRandomKey = (): string => {
+const cryptoRandomKey = (prefix = 'ev'): string => {
   if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
-    return `ev_${Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => b.toString(16).padStart(2, '0')).join('')}`;
+    return `${prefix}_${Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => b.toString(16).padStart(2, '0')).join('')}`;
   }
-  return `ev_${Math.random().toString(16).slice(2, 14)}`;
+  return `${prefix}_${Math.random().toString(16).slice(2, 14)}`;
 };
+
+/** A fresh key for a staged photo (`ev_…`) or land document (`doc_…`). */
+export const newStagedKey = (kind: 'photo' | 'document'): string =>
+  cryptoRandomKey(kind === 'photo' ? 'ev' : 'doc');
+
+const updateDocument = (
+  draft: ClaimDraft,
+  key: string,
+  update: (doc: StagedDocument) => StagedDocument
+): ClaimDraft => ({
+  ...draft,
+  documents: draft.documents.map((d) => (d.key === key ? update(d) : d)),
+});
 
 // ── Wizard navigation (pure reducer) ────────────────────────────────────────────────────
 
 export type WizardNavigation =
   | { type: 'next' }
   | { type: 'back' }
+  // Jump to an earlier (or already reached) step, e.g. the review step's Edit links.
+  | { type: 'goto'; step: ClaimWizardStep }
   | { type: 'select.parcel'; parcelId: string; geometry: GeoJsonPolygon }
   | { type: 'select.relationship'; relationship: ClaimantRelationship | null }
   | { type: 'select.event'; eventType: LossEventType }
@@ -385,56 +449,183 @@ export type WizardNavigation =
   | { type: 'select.area'; geometry: GeoJsonPolygon | null }
   | { type: 'evidence.add'; entry: StagedEvidenceEntry }
   | { type: 'evidence.remove'; key: string }
+  // A restored `missing_file` (or failed) photo was chosen again: same key, new bytes.
+  | { type: 'evidence.relink'; key: string; name: string; size: number; detectedType: StagedImageType }
   | { type: 'evidence.uploading'; key: string }
   | { type: 'evidence.uploaded'; key: string; uploadId: string }
   | { type: 'evidence.failed'; key: string; errorKey: string }
+  | { type: 'document.add'; entry: StagedDocumentEntry }
+  | { type: 'document.remove'; key: string }
+  | { type: 'document.category'; key: string; category: OwnershipDocumentCategory }
+  | { type: 'document.relink'; key: string; name: string; size: number; detectedType: StagedImageType }
+  | { type: 'document.uploading'; key: string }
+  | { type: 'document.uploaded'; key: string; uploadId: string }
+  | { type: 'document.attaching'; key: string }
+  | { type: 'document.attached'; key: string; evidenceId: string }
+  | { type: 'document.failed'; key: string; errorKey: string; failedPhase: 'upload' | 'attach' }
+  | { type: 'claim.created'; claimId: string }
+  | { type: 'idempotency.set'; key: string }
+  // Replace the whole draft (a draft restored from session storage).
+  | { type: 'restore'; draft: ClaimDraft }
   | { type: 'reset' };
+
+const stepIndexOf = (step: ClaimWizardStep): number => CLAIM_WIZARD_STEPS.indexOf(step);
+
+const laterStep = (a: ClaimWizardStep, b: ClaimWizardStep): ClaimWizardStep =>
+  stepIndexOf(a) >= stepIndexOf(b) ? a : b;
+
+// Index of the furthest step the farmer could stand on: every step before it can be continued.
+export const furthestValidStepIndex = (draft: ClaimDraft): number => {
+  for (let index = 0; index < CLAIM_WIZARD_STEPS.length - 1; index += 1) {
+    if (!stepCanAdvance({ ...draft, step: CLAIM_WIZARD_STEPS[index] })) return index;
+  }
+  return CLAIM_WIZARD_STEPS.length - 1;
+};
+
+/** Steps `goto` may open: already reached AND every earlier step is still complete. */
+export const canGotoStep = (draft: ClaimDraft, step: ClaimWizardStep): boolean => {
+  const target = stepIndexOf(step);
+  if (target === -1) return false;
+  return target <= stepIndexOf(draft.reachedStep) && target <= furthestValidStepIndex(draft);
+};
+
+// A change to a field that is sent on create. Before the claim exists the idempotency key is
+// rotated: if an earlier create did reach the server but its answer was lost, re-sending the OLD
+// key would hand back that claim with the OLD answers. After the claim exists the change is
+// refused (see ClaimDraft.claimId).
+const withCoreChange = (draft: ClaimDraft, next: ClaimDraft, changed: boolean): ClaimDraft => {
+  if (draft.claimId) return draft;
+  if (!changed) return draft;
+  return { ...next, idempotencyKey: generateIdempotencyKey() };
+};
+
+const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 
 export const wizardReducer = (draft: ClaimDraft, action: WizardNavigation): ClaimDraft => {
   switch (action.type) {
     case 'reset':
       return createEmptyDraft();
+    case 'restore':
+      return action.draft;
     case 'select.parcel':
-      return {
-        ...draft,
-        parcelId: action.parcelId,
-        geometry: action.geometry,
-      };
-    case 'select.relationship':
+      return withCoreChange(
+        draft,
+        { ...draft, parcelId: action.parcelId, geometry: action.geometry },
+        draft.parcelId !== action.parcelId || !sameJson(draft.geometry, action.geometry)
+      );
+    case 'select.relationship': {
       // Only the backend vocabulary is accepted; null clears the (optional) answer.
-      return {
-        ...draft,
-        claimantRelationship:
-          action.relationship === null || CLAIMANT_RELATIONSHIP_SET.has(action.relationship)
-            ? action.relationship
-            : draft.claimantRelationship,
-      };
-    case 'select.event':
-      return {
-        ...draft,
-        eventType: CLAIM_EVENT_TYPE_SET.has(action.eventType) ? action.eventType : draft.eventType,
-      };
+      const relationship =
+        action.relationship === null || CLAIMANT_RELATIONSHIP_SET.has(action.relationship)
+          ? action.relationship
+          : draft.claimantRelationship;
+      return withCoreChange(
+        draft,
+        { ...draft, claimantRelationship: relationship },
+        relationship !== draft.claimantRelationship
+      );
+    }
+    case 'select.event': {
+      const eventType = CLAIM_EVENT_TYPE_SET.has(action.eventType) ? action.eventType : draft.eventType;
+      return withCoreChange(draft, { ...draft, eventType }, eventType !== draft.eventType);
+    }
     case 'select.date':
-      return { ...draft, eventDate: action.eventDate };
+      return withCoreChange(
+        draft,
+        { ...draft, eventDate: action.eventDate },
+        action.eventDate !== draft.eventDate
+      );
     case 'select.area':
-      return { ...draft, geometry: action.geometry };
+      return withCoreChange(
+        draft,
+        { ...draft, geometry: action.geometry },
+        !sameJson(draft.geometry, action.geometry)
+      );
     case 'evidence.add':
       return addStagedEvidence(draft, action.entry);
     case 'evidence.remove':
       return removeStagedEvidence(draft, action.key);
+    case 'evidence.relink':
+      return {
+        ...draft,
+        evidence: draft.evidence.map((e) =>
+          e.key === action.key && e.status !== 'uploaded' && e.status !== 'uploading'
+            ? {
+                key: e.key,
+                name: action.name,
+                size: action.size,
+                detectedType: action.detectedType,
+                status: 'staged',
+              }
+            : e
+        ),
+      };
     case 'evidence.uploading':
       return markStagedEvidenceUploading(draft, action.key);
     case 'evidence.uploaded':
       return markStagedEvidenceUploaded(draft, action.key, action.uploadId);
     case 'evidence.failed':
       return markStagedEvidenceFailed(draft, action.key, action.errorKey);
+    case 'document.add':
+      if (!canStageDocument(draft)) return draft;
+      if (!(OWNERSHIP_DOCUMENT_CATEGORIES as string[]).includes(action.entry.category)) return draft;
+      return {
+        ...draft,
+        documents: [
+          ...draft.documents,
+          { ...action.entry, key: action.entry.key ?? newStagedKey('document'), status: 'staged' },
+        ],
+      };
+    case 'document.remove':
+      // An attached document cannot be removed: the backend has no delete call for it.
+      return {
+        ...draft,
+        documents: draft.documents.filter((d) => d.key !== action.key || d.status === 'attached' || d.status === 'attaching'),
+      };
+    case 'document.category':
+      if (!(OWNERSHIP_DOCUMENT_CATEGORIES as string[]).includes(action.category)) return draft;
+      // The category is sent with the attach, so it is fixed once attaching starts.
+      return updateDocument(draft, action.key, (d) =>
+        d.status === 'attached' || d.status === 'attaching' ? d : { ...d, category: action.category }
+      );
+    case 'document.relink':
+      return updateDocument(draft, action.key, (d) =>
+        d.status === 'attached' || d.status === 'attaching' || d.status === 'uploading'
+          ? d
+          : {
+              key: d.key,
+              category: d.category,
+              name: action.name,
+              size: action.size,
+              detectedType: action.detectedType,
+              status: 'staged',
+            }
+      );
+    case 'document.uploading':
+      return updateDocument(draft, action.key, (d) => ({ ...d, status: 'uploading', errorKey: undefined, failedPhase: undefined }));
+    case 'document.uploaded':
+      return updateDocument(draft, action.key, (d) => ({ ...d, status: 'uploaded', uploadId: action.uploadId, errorKey: undefined, failedPhase: undefined }));
+    case 'document.attaching':
+      return updateDocument(draft, action.key, (d) => ({ ...d, status: 'attaching', errorKey: undefined, failedPhase: undefined }));
+    case 'document.attached':
+      return updateDocument(draft, action.key, (d) => ({ ...d, status: 'attached', evidenceId: action.evidenceId, errorKey: undefined, failedPhase: undefined }));
+    case 'document.failed':
+      return updateDocument(draft, action.key, (d) => ({ ...d, status: 'failed', errorKey: action.errorKey, failedPhase: action.failedPhase }));
+    case 'claim.created':
+      return { ...draft, claimId: action.claimId };
+    case 'idempotency.set':
+      return isValidIdempotencyKey(action.key) ? { ...draft, idempotencyKey: action.key } : draft;
+    case 'goto':
+      if (!canGotoStep(draft, action.step)) return draft;
+      return { ...draft, step: action.step };
     case 'next': {
-      const index = CLAIM_WIZARD_STEPS.indexOf(draft.step);
+      const index = stepIndexOf(draft.step);
       if (index === -1 || index >= CLAIM_WIZARD_STEPS.length - 1) return draft;
-      return { ...draft, step: CLAIM_WIZARD_STEPS[index + 1] };
+      const step = CLAIM_WIZARD_STEPS[index + 1];
+      return { ...draft, step, reachedStep: laterStep(draft.reachedStep, step) };
     }
     case 'back': {
-      const index = CLAIM_WIZARD_STEPS.indexOf(draft.step);
+      const index = stepIndexOf(draft.step);
       if (index <= 0) return draft;
       return { ...draft, step: CLAIM_WIZARD_STEPS[index - 1] };
     }
@@ -443,28 +634,89 @@ export const wizardReducer = (draft: ClaimDraft, action: WizardNavigation): Clai
   }
 };
 
-// Latest step the farmer may continue to given the previous selections (gates the Continue
-// button so unfinished steps cannot be skipped). Returns the step itself when requirements are
-// met (undefined for 'parcel', which has no prerequisites).
+// ── Step gates ──────────────────────────────────────────────────────────────────────────
+
+/** Photos that can still be sent: everything except entries whose file was lost. */
+export const usablePhotoCount = (draft: ClaimDraft): number =>
+  draft.evidence.filter((e) => e.status !== 'missing_file').length;
+
+/** True while a restored photo or document still needs its file chosen again. */
+export const hasMissingFiles = (draft: ClaimDraft): boolean =>
+  draft.evidence.some((e) => e.status === 'missing_file') ||
+  draft.documents.some((d) => d.status === 'missing_file');
+
+export type EventStepNeed = 'event_type' | 'date' | 'area';
+
+/** What the Event step still needs before Continue is enabled (shown as an aria-live hint). */
+export const eventStepMissing = (draft: ClaimDraft): EventStepNeed[] => {
+  const missing: EventStepNeed[] = [];
+  if (draft.eventType === null) missing.push('event_type');
+  if (!validateClaimDate(draft.eventDate).ok) missing.push('date');
+  if (draft.geometry === null) missing.push('area');
+  return missing;
+};
+
+export type EvidenceStepNeed = 'photos' | 'missing_files';
+
+export const evidenceStepMissing = (draft: ClaimDraft): EvidenceStepNeed[] => {
+  const missing: EvidenceStepNeed[] = [];
+  if (usablePhotoCount(draft) < MIN_PHOTOS_TO_SUBMIT) missing.push('photos');
+  if (hasMissingFiles(draft)) missing.push('missing_files');
+  return missing;
+};
+
+// Whether the farmer may continue from the current step (gates the Continue button so unfinished
+// steps cannot be skipped). The review step re-checks everything through buildReviewSummary.
 export const stepCanAdvance = (draft: ClaimDraft): boolean => {
   switch (draft.step) {
     case 'parcel':
-      return Boolean(draft.parcelId && draft.geometry);
+      // select.parcel always sets the parcel AND its boundary as the starting area. The area is
+      // then the Event step's business: clearing it there must not make the parcel step "undone".
+      return Boolean(draft.parcelId);
     case 'relationship':
       return true; // optional: the farmer may skip it
     case 'event':
-      return draft.eventType !== null;
-    case 'date':
-      return validateClaimDate(draft.eventDate).ok;
-    case 'area':
-      return draft.geometry !== null;
+      return eventStepMissing(draft).length === 0;
     case 'evidence':
-      return true; // evidence is optional on submit; the review step re-checks everything
+      return evidenceStepMissing(draft).length === 0;
     case 'review':
       return true;
     default:
       return false;
   }
+};
+
+// ── Land document guidance ───────────────────────────────────────────────────────────────
+
+export interface DocumentGroupStatus {
+  group: OwnershipDocumentCategory[];
+  satisfied: boolean;
+}
+
+// The document groups the declared relationship is expected to cover, each marked satisfied when
+// a staged or attached document has one of its categories. Guidance only: the backend decides what
+// is missing. No relationship → no groups (the UI shows generic guidance).
+export const documentGroupStatus = (
+  relationship: ClaimantRelationship | null,
+  documents: StagedDocument[]
+): DocumentGroupStatus[] => {
+  if (!relationship || !RELATIONSHIP_DOCUMENT_GROUPS[relationship]) return [];
+  const present = new Set(
+    documents.filter((d) => d.status !== 'missing_file').map((d) => d.category)
+  );
+  return RELATIONSHIP_DOCUMENT_GROUPS[relationship].map((group) => ({
+    group,
+    satisfied: group.some((category) => present.has(category)),
+  }));
+};
+
+/** Category for the next document: the first category of the first group not yet covered. */
+export const defaultDocumentCategory = (
+  relationship: ClaimantRelationship | null,
+  documents: StagedDocument[]
+): OwnershipDocumentCategory => {
+  const open = documentGroupStatus(relationship, documents).find((g) => !g.satisfied);
+  return open?.group[0] ?? OWNERSHIP_DOCUMENT_CATEGORIES[0];
 };
 
 // ── Review summary (what the farmer confirms before submit) ─────────────────────────────
@@ -478,10 +730,13 @@ export interface ClaimReviewSummary {
     | 'no_date'
     | 'invalid_date'
     | 'no_geometry'
+    | 'missing_files'
+    | 'no_photos'
     | 'ready';
   parcelName: string | null;
   crop: string | null;
   parcelAreaAcres: number | null;
+  relationship: ClaimantRelationship | null;
   eventType: LossEventType | null;
   eventDate: string | null;
   claimedAreaAcres: number | null;
@@ -489,104 +744,68 @@ export interface ClaimReviewSummary {
   // Drives the review copy so a partial claim is never presented as the whole parcel.
   affectedIsWholeParcel: boolean;
   stagedEvidenceCount: number;
+  photos: { key: string; name: string; status: StagedEvidence['status'] }[];
+  documents: { key: string; name: string; category: OwnershipDocumentCategory; status: StagedDocumentStatus }[];
 }
 
 export const buildReviewSummary = (
   draft: ClaimDraft,
   parcels: ParcelRecord[]
 ): ClaimReviewSummary => {
-  if (parcels.length === 0) {
-    return {
-      ok: false,
-      reason: 'no_parcels',
-      parcelName: null,
-      crop: null,
-      parcelAreaAcres: null,
-      eventType: null,
-      eventDate: null,
-      claimedAreaAcres: null,
-      affectedIsWholeParcel: false,
-      stagedEvidenceCount: draft.evidence.length,
-    };
-  }
   const parcel = parcels.find((p) => p.parcelId === draft.parcelId) ?? null;
-  if (!parcel) {
-    return {
-      ok: false,
-      reason: 'no_parcel',
-      parcelName: null,
-      crop: null,
-      parcelAreaAcres: null,
-      eventType: null,
-      eventDate: null,
-      claimedAreaAcres: null,
-      affectedIsWholeParcel: false,
-      stagedEvidenceCount: draft.evidence.length,
-    };
-  }
-  if (!draft.eventType) {
-    return {
-      ok: false,
-      reason: 'no_event',
-      parcelName: parcel.name,
-      crop: parcel.crop,
-      parcelAreaAcres: parcel.calculatedAreaAcres,
-      eventType: null,
-      eventDate: draft.eventDate,
-      claimedAreaAcres: null,
-      affectedIsWholeParcel: false,
-      stagedEvidenceCount: draft.evidence.length,
-    };
-  }
+  const base: ClaimReviewSummary = {
+    ok: false,
+    reason: 'no_parcels',
+    parcelName: null,
+    crop: null,
+    parcelAreaAcres: null,
+    relationship: draft.claimantRelationship,
+    eventType: null,
+    eventDate: null,
+    claimedAreaAcres: null,
+    affectedIsWholeParcel: false,
+    stagedEvidenceCount: draft.evidence.length,
+    photos: draft.evidence.map(({ key, name, status }) => ({ key, name, status })),
+    documents: draft.documents.map(({ key, name, category, status }) => ({ key, name, category, status })),
+  };
+  if (parcels.length === 0) return base;
+  if (!parcel) return { ...base, reason: 'no_parcel' };
+  const withParcel: ClaimReviewSummary = {
+    ...base,
+    parcelName: parcel.name,
+    crop: parcel.crop,
+    parcelAreaAcres: parcel.calculatedAreaAcres,
+  };
+  if (!draft.eventType) return { ...withParcel, reason: 'no_event', eventDate: draft.eventDate };
   const dateCheck = validateClaimDate(draft.eventDate);
   if (!dateCheck.ok) {
     return {
-      ok: false,
+      ...withParcel,
       reason: dateCheck.reason === 'required' ? 'no_date' : 'invalid_date',
-      parcelName: parcel.name,
-      crop: parcel.crop,
-      parcelAreaAcres: parcel.calculatedAreaAcres,
       eventType: draft.eventType,
       eventDate: draft.eventDate,
-      claimedAreaAcres: null,
-      affectedIsWholeParcel: false,
-      stagedEvidenceCount: draft.evidence.length,
     };
   }
   // No affected-area selection at all. This MUST stay a hard block: the parcel boundary is a
   // legal claim only when the farmer explicitly chose it on the area step, never as a silent
   // fallback for a cleared/never-drawn polygon.
   if (!draft.geometry) {
-    return {
-      ok: false,
-      reason: 'no_geometry',
-      parcelName: parcel.name,
-      crop: parcel.crop,
-      parcelAreaAcres: parcel.calculatedAreaAcres,
-      eventType: draft.eventType,
-      eventDate: draft.eventDate,
-      claimedAreaAcres: null,
-      affectedIsWholeParcel: false,
-      stagedEvidenceCount: draft.evidence.length,
-    };
+    return { ...withParcel, reason: 'no_geometry', eventType: draft.eventType, eventDate: draft.eventDate };
   }
   // The claimed area is a PREVIEW of the polygon the farmer actually selected — it must never be
   // the parcel total, or a 1.4-acre partial claim would be reviewed (and then submitted) as the
   // whole parcel. The backend recomputes the stored value from the same geometry.
-  const sameGeometry =
-    JSON.stringify(draft.geometry) === JSON.stringify(parcel.geometry);
-  return {
-    ok: true,
-    reason: 'ready',
-    parcelName: parcel.name,
-    crop: parcel.crop,
-    parcelAreaAcres: parcel.calculatedAreaAcres,
+  const sameGeometry = JSON.stringify(draft.geometry) === JSON.stringify(parcel.geometry);
+  const complete: ClaimReviewSummary = {
+    ...withParcel,
     eventType: draft.eventType,
     eventDate: draft.eventDate,
     claimedAreaAcres: sameGeometry ? parcel.calculatedAreaAcres : previewAreaAcres(draft.geometry),
     affectedIsWholeParcel: sameGeometry,
-    stagedEvidenceCount: draft.evidence.length,
   };
+  if (hasMissingFiles(draft)) return { ...complete, reason: 'missing_files' };
+  if (usablePhotoCount(draft) < MIN_PHOTOS_TO_SUBMIT) return { ...complete, reason: 'no_photos' };
+  return { ...complete, ok: true, reason: 'ready' };
 };
 
 // ── Claims list (My Claims) ─────────────────────────────────────────────────────────────
@@ -695,7 +914,6 @@ export interface ClaimDetailViewModel {
   canSubmit: boolean;
   canWithdraw: boolean;
   canResubmit: boolean;
-  canVerify: boolean;
   canEditEvidence: boolean;
   hasResult: boolean;
   latestEvidence: EvidencePresign | null;
@@ -781,7 +999,6 @@ export const claimDetailViewModel = (
     canSubmit: canSubmitClaim(claim.state),
     canWithdraw: canWithdrawClaim(claim.state),
     canResubmit: canResubmitClaim(claim.state),
-    canVerify: canRequestVerification(claim.state),
     canEditEvidence: canMutateEvidence(claim.state),
     hasResult: assessment?.state != null,
     latestEvidence: null,
@@ -811,7 +1028,6 @@ const emptyDetailViewModel = (): ClaimDetailViewModel => ({
   canSubmit: false,
   canWithdraw: false,
   canResubmit: false,
-  canVerify: false,
   canEditEvidence: false,
   hasResult: false,
   latestEvidence: null,
@@ -884,6 +1100,111 @@ export const verificationResultModel = (
     evidenceVersion: verification.evidenceVersion ?? null,
     engineVersion: verification.engineVersion ?? null,
     claimId: verification.claimId,
+  };
+};
+
+// ── Translated decision reasons (plan B4, design §7.4) ───────────────────────────────────────
+// The backend's decision `reason` is English free text (and an admin override's reason is the
+// reviewer's own note), so it is never shown to the farmer. The reasons are rebuilt from the
+// engine's rule report instead: each failing rule, in the engine's precedence order, maps to a
+// translated sentence. Supporting-only rules (weather) never count as a reason.
+
+export const DECISION_RULE_ORDER = [
+  'timelinessCheck',
+  'eventTypeCheck',
+  'areaCheck',
+  'spatialCheck',
+  'overlapCheck',
+  'remainingCheck',
+  'aiCheck',
+] as const;
+
+export const DECISION_OUTCOMES = [
+  'verified',
+  'partially_verified',
+  'rejected',
+  'out_of_limit',
+  'duplicate_area',
+  'more_evidence_required',
+] as const;
+
+const DECISION_OUTCOME_SET: ReadonlySet<string> = new Set(DECISION_OUTCOMES);
+
+/**
+ * i18n keys explaining a decision: `decisionReason_<rule>` for every failing rule (the AI rule
+ * per outcome: `decisionReason_aiCheck_<outcome>`), else `decisionReason_outcome_<outcome>`. A
+ * reviewer's decision (decidedBy other than the engine) is explained as such, because the stored
+ * rule report belongs to the earlier engine run and may not match the reviewer's outcome.
+ */
+export const decisionReasonKeys = (
+  rules: VerificationRules | null | undefined,
+  outcome: string | null | undefined,
+  decidedBy?: string | null
+): string[] => {
+  const known = outcome && DECISION_OUTCOME_SET.has(outcome) ? outcome : null;
+  if (decidedBy && decidedBy !== 'engine') return ['decisionReason_reviewer'];
+  const keys: string[] = [];
+  for (const rule of DECISION_RULE_ORDER) {
+    const check = rules?.[rule];
+    if (!check || check.passed !== false || SUPPORTING_ONLY_RULES.has(rule)) continue;
+    keys.push(rule === 'aiCheck' ? `decisionReason_aiCheck_${known ?? 'unknown'}` : `decisionReason_${rule}`);
+  }
+  if (keys.length > 0) return keys;
+  return [known ? `decisionReason_outcome_${known}` : 'decisionReason_outcome_unknown'];
+};
+
+// Overlap warnings carry an English `message`; only the stable `code` is used
+// (services/claimSpatial.service.js: outside_parcel, overlaps_in_flight, overlaps_verified).
+const OVERLAP_WARNING_CODES: ReadonlySet<string> = new Set(['outside_parcel', 'overlaps_in_flight', 'overlaps_verified']);
+
+export const overlapWarningMessage = (warning: {
+  code?: string | null;
+  overlapAreaAcres?: number | null;
+}): { key: string; params: Record<string, number> } => {
+  const code = warning.code && OVERLAP_WARNING_CODES.has(warning.code) ? warning.code : 'generic';
+  if (code === 'overlaps_verified' && typeof warning.overlapAreaAcres === 'number' && warning.overlapAreaAcres > 0) {
+    return { key: 'overlapWarning_overlaps_verified_area', params: { acres: warning.overlapAreaAcres } };
+  }
+  return { key: `overlapWarning_${code}`, params: {} };
+};
+
+/**
+ * The persisted decision of a claim (GET /claims/:id carries the assessment) as the shape the
+ * result card renders. Area numbers come from the claim itself (server-measured claimedAreaAcres
+ * and the frozen parcel snapshot), never placeholders. null while there is no decision.
+ */
+export const verificationFromClaim = (claim: LossClaim | null): VerificationDecision | null => {
+  const assessment = claim?.assessment;
+  if (!claim || !assessment || !assessment.state) return null;
+  return {
+    claimId: claim.id,
+    idempotent: true,
+    inProgress: false,
+    claimState: claim.state,
+    outcome: assessment.state,
+    decision: assessment.state,
+    reason: assessment.reason,
+    rules: assessment.rules,
+    approvedGeometry: assessment.approvedGeometry,
+    approvedAreaAcres: assessment.approvedAreaAcres,
+    weatherCorrelation: assessment.weatherCorrelation,
+    decidedAt: assessment.decidedAt,
+    decidedBy: assessment.decidedBy,
+    claimedAreaAcres: claim.claimedAreaAcres,
+    parcelAreaAcres: claim.parcelSnapshot?.parcelAreaAcres ?? null,
+    evidenceVersion: null,
+    engineVersion: null,
+    verifiedAreaAcres: assessment.verifiedAreaAcres ?? null,
+    remainingEligible: assessment.remainingEligible ?? null,
+    previouslyVerifiedAcres: assessment.previouslyVerifiedAcres ?? null,
+    inFlightAreaAcres: assessment.inFlightAreaAcres ?? null,
+    overlapWarnings: assessment.overlapWarnings ?? [],
+    spatialEvaluated: assessment.spatialEvaluated ?? false,
+    held: assessment.held ?? false,
+    pendingComponents: assessment.pendingComponents ?? [],
+    components: assessment.components ?? null,
+    policyId: assessment.policyId,
+    policyHash: assessment.policyHash ?? null,
   };
 };
 
@@ -1113,6 +1434,11 @@ const defaultWait = (ms: number) => new Promise<void>((resolve) => setTimeout(re
 // Sequential poll loop: waits FIRST (the caller just got a fresh /verify answer), never overlaps
 // requests, treats a failed read as transient, and enforces both a floor on the interval and a
 // hard cap on the number of reads.
+/**
+ * @deprecated Since the claim tracker (plan B4/B5) the farmer UI no longer calls /verify, so nothing
+ * starts this loop. Progress is polled by `useClaimProgress` (src/hooks/useClaimProgress.ts) with
+ * the scheduler in src/utils/progressPolling.ts. Kept, with its tests, until a later clean-up.
+ */
 export const pollVerificationUntilSettled = async ({
   load,
   onClaim,

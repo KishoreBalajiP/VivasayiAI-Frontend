@@ -11,9 +11,39 @@ import {
   setAccessToken,
 } from '../api/client';
 import i18n from '../i18n';
+import { consumeReturnTo, notifyRouteChange, saveReturnTo } from '../routing/useHashRoute';
+import { isBackendTokenExpired } from '../utils/jwt';
 
-const USER_KEY = `${config.auth.storageKeyPrefix}:user`;
+// Exported so other readers of the stored user (AdminReviewPage's actor sub) cannot drift to a
+// different spelling of the key again.
+export const USER_STORAGE_KEY = `${config.auth.storageKeyPrefix}:user`;
+const USER_KEY = USER_STORAGE_KEY;
 const OAUTH_STATE_KEY = `${config.auth.storageKeyPrefix}:oauthState`;
+
+// Claim-wizard drafts are stored per user under this prefix (claimDraftStorage). They are removed
+// on an explicit logout so the next person on a shared phone never sees them. A 401/expiry does
+// NOT clear them: the same farmer signs back in and continues the draft.
+const CLAIM_DRAFT_KEY_PREFIX = 'vivasayi.claimDraft.';
+// The claim tracker's last-known progress per claim (utils/progressPolling.ts, 1 h snapshot). Also
+// farmer data, so it goes on logout too.
+const CLAIM_PROGRESS_KEY_PREFIX = 'vivasayi.claimProgress.';
+
+const clearClaimDrafts = (): void => {
+  // Accessors, not values: merely touching `sessionStorage` can throw when storage is blocked.
+  for (const getStorage of [() => sessionStorage, () => localStorage]) {
+    try {
+      const storage = getStorage();
+      const keys: string[] = [];
+      for (let i = 0; i < storage.length; i += 1) {
+        const key = storage.key(i);
+        if (key && (key.startsWith(CLAIM_DRAFT_KEY_PREFIX) || key.startsWith(CLAIM_PROGRESS_KEY_PREFIX))) keys.push(key);
+      }
+      keys.forEach((key) => storage.removeItem(key));
+    } catch {
+      // storage unavailable — nothing persisted there to clear
+    }
+  }
+};
 
 // Fallback for browsers/environments where sessionStorage is blocked (e.g. privacy modes):
 // the OAuth state still survives within the SPA lifetime so login keeps working.
@@ -60,17 +90,6 @@ const generateOAuthState = (): string => {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 };
 
-// The backend access token is a short-lived JWT. We cannot verify its signature in the
-// browser, but we can read `exp` to skip a doomed API call after expiry (a 401 then takes
-// over as the authoritative path back to login).
-const isBackendTokenExpired = (token: string): boolean => {
-  try {
-    const payload = JSON.parse(atob(token.split('.')[1]));
-    return typeof payload.exp === 'number' && Date.now() >= payload.exp * 1000;
-  } catch {
-    return true;
-  }
-};
 
 const readStored = (key: string): string | null => {
   try {
@@ -162,8 +181,12 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       // linked elsewhere, 502 sign-in service down); anything else stays the generic message.
       setAuthError(loginErrorKey(err instanceof ApiClientError ? err.status : -1));
     } finally {
-      // Remove the temporary OAuth params from the URL (never leave the code/state visible).
-      window.history.replaceState({}, document.title, window.location.pathname);
+      // Remove the temporary OAuth params from the URL (never leave the code/state visible) and
+      // restore the in-app route saved before the Cognito redirect (which drops the hash).
+      // replaceState fires no hashchange, so the router is notified explicitly.
+      const returnTo = consumeReturnTo();
+      window.history.replaceState({}, document.title, window.location.pathname + (returnTo ?? ''));
+      notifyRouteChange();
       setIsAuthenticating(false);
       setIsLoading(false);
     }
@@ -249,6 +272,8 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     const state = generateOAuthState();
     writeStored(OAUTH_STATE_KEY, state);
     inMemoryOAuthState = state;
+    // Remember where the farmer was (e.g. #/claims/<id>) so the callback can return there.
+    saveReturnTo();
 
     const params = new URLSearchParams({
       client_id: config.cognito.clientId,
@@ -264,6 +289,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   }, []);
 
   const logout = useCallback(() => {
+    clearClaimDrafts();
     clearSession();
   }, [clearSession]);
 

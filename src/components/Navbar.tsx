@@ -1,15 +1,22 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
-import { useLocation } from '../context/LocationContext';
-import { MapPin, LogOut, User, Sprout, Loader2, MessageSquareText, FileText, ShieldCheck, Map } from 'lucide-react';
+import { MapPin, LogOut, User, Sprout, MessageSquareText, FileText, ShieldCheck, Map } from 'lucide-react';
 import type { Language } from '../types';
+import type { AppSection } from '../routing/hashRoute';
+import { cn } from './ui';
 
 // Phase 10 (E9-S10): 'admin' unlocks the review workflow section (render-gated by isAdmin).
-export type AppSection = 'chat' | 'claims' | 'admin';
+// The section type now lives with the hash router; re-exported for existing imports.
+export type { AppSection };
 
 interface NavbarProps {
   hasProfile: boolean;
+  /** Farm district from the PROFILE (never the device location). Null when not set yet. */
+  farmDistrict?: string | null;
+  /** Profile not known yet (loading, or the load failed): hide the chip rather than flash
+   *  "Set farm district" at a farmer who already has one. */
+  profileUnknown?: boolean;
   onOpenProfile: () => void;
   onOpenManageParcels: () => void;
   section: AppSection;
@@ -21,134 +28,115 @@ const LANGUAGES: { code: Language; label: string; short: string }[] = [
   { code: 'en', label: 'English', short: 'EN' },
 ];
 
-export const Navbar = ({ hasProfile, onOpenProfile, onOpenManageParcels, section, onSelectSection }: NavbarProps) => {
+const NAV_ITEMS: { section: AppSection; labelKey: string; icon: typeof MessageSquareText; adminOnly?: boolean }[] = [
+  { section: 'chat', labelKey: 'navChat', icon: MessageSquareText },
+  { section: 'claims', labelKey: 'navClaims', icon: FileText },
+  { section: 'admin', labelKey: 'navAdmin', icon: ShieldCheck, adminOnly: true },
+];
+
+export const Navbar = ({
+  hasProfile,
+  farmDistrict = null,
+  profileUnknown = false,
+  onOpenProfile,
+  onOpenManageParcels,
+  section,
+  onSelectSection,
+}: NavbarProps) => {
   const { t } = useTranslation();
   const { user, language, setLanguage, logout, isAdmin } = useAuth();
-  const { status, district, details, requestLocation } = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
 
   const name = user?.name?.trim() || user?.email?.split('@')[0] || '';
   const initials = (name || 'U').slice(0, 1).toUpperCase();
 
-  const placeName = details?.displayName ?? null;
-  const locationLabel =
-    status === 'granted' && placeName
-      ? placeName
-      : status === 'requesting'
-        ? t('locationRequesting')
-        : status === 'outside-tn' && placeName
-          ? placeName
-          : status === 'outside-tn'
-            ? t('outsideTamilNadu')
-            : t('locationFailed');
-
-  const locationTitle =
-    status === 'granted' && details && details.lat !== undefined && details.lon !== undefined
-      ? `${t('detectedLocation')}: ${placeName ?? district ?? ''} · ${t('coordsTitle', {
-          lat: details.lat.toFixed(4),
-          lon: details.lon.toFixed(4),
-        })}`
-      : `${t('detectedLocation')}: ${placeName ?? district ?? ''}`;
-
   return (
-    <header className="relative z-30 shrink-0 bg-emerald-900 text-white shadow-md">
+    // data-surface="dark": the global keyboard ring (brand-700) is only ~1.8:1 on this brand-900
+    // header and ~1.4:1 on the brand-800 pills, so index.css turns it white inside (9.7:1 and
+    // 7.7:1, above the 3:1 WCAG 1.4.11 minimum). Scoped by surface, not per control, so a control
+    // added here later gets the right ring without remembering a class. The white user menu below
+    // is marked data-surface="light" and keeps the brand-700 ring.
+    <header data-surface="dark" className="relative z-30 shrink-0 bg-brand-900 text-white shadow-md">
       <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-3 sm:gap-3 sm:px-4">
         {/* BRAND */}
         <div className="flex min-w-0 items-center gap-2">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-green-700 shadow-inner">
-            <Sprout className="h-5 w-5 text-white" />
+            <Sprout aria-hidden="true" className="h-5 w-5 text-white" />
           </div>
           <div className="min-w-0 leading-tight">
             <div className="truncate text-sm font-bold sm:text-base">Vivasayi AI</div>
-            <div className="hidden truncate text-[11px] text-emerald-200 md:block">
+            <div className="hidden truncate text-2xs text-brand-200 md:block">
               {t('appTitle')}
             </div>
           </div>
         </div>
 
-        {/* LOCATION CHIP */}
-        <button
-          onClick={() => {
-            if (status === 'granted') return;
-            void requestLocation();
-          }}
-          disabled={status === 'requesting'}
-          title={
-            status === 'granted' || status === 'outside-tn'
-              ? locationTitle
-              : t('detectLocation')
-          }
-          className={`ml-1 flex min-w-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors sm:text-sm ${
-            status === 'granted'
-              ? 'bg-emerald-800 text-emerald-100'
-              : 'bg-amber-500/90 text-emerald-950 hover:bg-amber-400'
-          } disabled:cursor-wait`}
-        >
-          {status === 'requesting' ? (
-            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-          ) : (
-            <MapPin className="h-3.5 w-3.5 shrink-0" />
-          )}
-          <span className="truncate">{locationLabel}</span>
-        </button>
+        {/* FARM CHIP — the farm district from the profile. The header NEVER shows the device
+            location or an "Outside Tamil Nadu" verdict (that free-text device place was how
+            "…, Andhra Pradesh" ended up next to a Chennai farm). Tapping opens the profile. */}
+        {!profileUnknown && (
+          <button
+            type="button"
+            data-testid="header-farm-chip"
+            onClick={onOpenProfile}
+            title={farmDistrict ? t('headerFarmDistrictTitle') : t('headerSetFarmDistrictTitle')}
+            className={cn(
+              'ml-1 flex min-w-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors sm:text-sm',
+              farmDistrict
+                ? 'bg-brand-800 text-brand-100 hover:bg-brand-700'
+                : 'border border-brand-600 text-brand-100 hover:bg-brand-800'
+            )}
+          >
+            <MapPin aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">
+              {farmDistrict ? t('headerFarmDistrict', { district: farmDistrict }) : t('headerSetFarmDistrict')}
+            </span>
+          </button>
+        )}
 
         <div className="flex-1" />
 
-        {/* SECTION TOGGLE (Assistant / Claims) */}
-        <nav aria-label={t('mainNavigation')} className="flex items-center rounded-full border border-emerald-700 bg-emerald-800 p-0.5 text-sm">
-          <button
-            onClick={() => onSelectSection('chat')}
-            aria-current={section === 'chat' ? 'page' : undefined}
-            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-semibold transition-colors sm:px-3 ${
-              section === 'chat' ? 'bg-white text-emerald-900 shadow' : 'text-emerald-100 hover:text-white'
-            }`}
-          >
-            <MessageSquareText className="h-4 w-4" />
-            <span className="hidden sm:inline">{t('navChat')}</span>
-          </button>
-          <button
-            onClick={() => onSelectSection('claims')}
-            aria-current={section === 'claims' ? 'page' : undefined}
-            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-semibold transition-colors sm:px-3 ${
-              section === 'claims' ? 'bg-white text-emerald-900 shadow' : 'text-emerald-100 hover:text-white'
-            }`}
-          >
-            <FileText className="h-4 w-4" />
-            <span className="hidden sm:inline">{t('navClaims')}</span>
-          </button>
-          {isAdmin && (
+        {/* SECTION TOGGLE (Assistant / Claims / Admin). Below 640px only the icon shows, but the
+            label stays in the accessibility tree (sr-only), so every button keeps its name. */}
+        <nav aria-label={t('mainNavigation')} className="flex items-center rounded-full border border-brand-700 bg-brand-800 p-0.5 text-sm">
+          {NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin).map(({ section: target, labelKey, icon: Icon }) => (
             <button
-              onClick={() => onSelectSection('admin')}
-              aria-current={section === 'admin' ? 'page' : undefined}
-              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-semibold transition-colors sm:px-3 ${
-                section === 'admin' ? 'bg-white text-emerald-900 shadow' : 'text-emerald-100 hover:text-white'
-              }`}
+              key={target}
+              type="button"
+              onClick={() => onSelectSection(target)}
+              aria-current={section === target ? 'page' : undefined}
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-semibold transition-colors sm:px-3',
+                section === target ? 'bg-white text-brand-900 shadow' : 'text-brand-100 hover:text-white'
+              )}
             >
-              <ShieldCheck className="h-4 w-4" />
-              <span className="hidden sm:inline">{t('navAdmin')}</span>
+              <Icon aria-hidden="true" className="h-4 w-4" />
+              <span className="sr-only sm:not-sr-only">{t(labelKey)}</span>
             </button>
-          )}
+          ))}
         </nav>
 
         {/* LANGUAGE PILL (always visible, two-option segmented control) */}
         <div
           role="group"
           aria-label={t('changeLanguage')}
-          className="flex items-center rounded-full border border-emerald-700 bg-emerald-800 p-0.5 text-xs sm:text-sm"
+          className="flex items-center rounded-full border border-brand-700 bg-brand-800 p-0.5 text-xs sm:text-sm"
         >
           {LANGUAGES.map((lang) => (
             <button
               key={lang.code}
+              type="button"
               onClick={() => setLanguage(lang.code)}
               aria-pressed={language === lang.code}
-              className={`rounded-full px-2 py-1 font-semibold transition-colors sm:px-3 ${
-                language === lang.code
-                  ? 'bg-white text-emerald-900 shadow'
-                  : 'text-emerald-100 hover:text-white'
-              }`}
+              aria-label={lang.label}
+              lang={lang.code}
+              className={cn(
+                'rounded-full px-2 py-1 font-semibold transition-colors sm:px-3',
+                language === lang.code ? 'bg-white text-brand-900 shadow' : 'text-brand-100 hover:text-white'
+              )}
             >
-              <span className="sm:hidden">{lang.short}</span>
-              <span className="hidden sm:inline">{lang.label}</span>
+              <span aria-hidden="true" className="sm:hidden">{lang.short}</span>
+              <span aria-hidden="true" className="hidden sm:inline">{lang.label}</span>
             </button>
           ))}
         </div>
@@ -156,10 +144,11 @@ export const Navbar = ({ hasProfile, onOpenProfile, onOpenManageParcels, section
         {/* USER MENU */}
         <div className="relative">
           <button
+            type="button"
             onClick={() => setMenuOpen((o) => !o)}
-            aria-label={user?.email ?? 'Account'}
+            aria-label={user?.email ?? t('account')}
             aria-expanded={menuOpen}
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-600 text-sm font-bold text-white ring-2 ring-emerald-500/50 transition hover:bg-emerald-500"
+            className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-700 text-sm font-bold text-white ring-2 ring-brand-500/50 transition hover:bg-brand-600"
           >
             {initials}
           </button>
@@ -167,64 +156,72 @@ export const Navbar = ({ hasProfile, onOpenProfile, onOpenManageParcels, section
           {menuOpen && (
             <>
               <button
+                type="button"
                 className="fixed inset-0 z-40 cursor-default"
-                aria-label="Close menu"
+                aria-label={t('closeMenu')}
                 onClick={() => setMenuOpen(false)}
               />
-              <div className="absolute right-0 top-11 z-50 w-56 overflow-hidden rounded-xl border border-gray-100 bg-white text-gray-800 shadow-xl">
+              <div
+                data-surface="light"
+                className="absolute right-0 top-11 z-50 w-56 overflow-hidden rounded-control border border-gray-100 bg-white text-ink shadow-xl"
+              >
                 <div className="border-b border-gray-100 px-3 py-2.5">
                   <div className="truncate text-sm font-semibold">
                     {user?.name || name || 'Vivasayi AI'}
                   </div>
                   {user?.email && (
-                    <div className="truncate text-xs text-gray-500">{user.email}</div>
+                    <div className="truncate text-xs text-ink-subtle">{user.email}</div>
                   )}
                 </div>
 
                 {hasProfile ? (
                   <>
                     <button
+                      type="button"
                       onClick={() => {
                         setMenuOpen(false);
                         onOpenProfile();
                       }}
-                      className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-emerald-50"
+                      className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm focus-visible:outline-offset-[-2px] hover:bg-brand-50"
                     >
-                      <User className="h-4 w-4 text-emerald-700" />
+                      <User aria-hidden="true" className="h-4 w-4 text-brand-700" />
                       {t('farmProfile')}
                     </button>
                     <button
+                      type="button"
                       onClick={() => {
                         setMenuOpen(false);
                         onOpenManageParcels();
                       }}
-                      className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-emerald-50"
+                      className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm focus-visible:outline-offset-[-2px] hover:bg-brand-50"
                     >
-                      <Map className="h-4 w-4 text-emerald-700" />
+                      <Map aria-hidden="true" className="h-4 w-4 text-brand-700" />
                       {t('manageParcels')}
                     </button>
                   </>
                 ) : (
                   <button
+                    type="button"
                     onClick={() => {
                       setMenuOpen(false);
                       onOpenProfile();
                     }}
-                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-emerald-50"
+                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm focus-visible:outline-offset-[-2px] hover:bg-brand-50"
                   >
-                    <User className="h-4 w-4 text-emerald-700" />
+                    <User aria-hidden="true" className="h-4 w-4 text-brand-700" />
                     {t('setupProfile')}
                   </button>
                 )}
 
                 <button
+                  type="button"
                   onClick={() => {
                     setMenuOpen(false);
                     logout();
                   }}
-                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-red-600 hover:bg-red-50"
+                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm focus-visible:outline-offset-[-2px] text-danger-fg hover:bg-danger-bg"
                 >
-                  <LogOut className="h-4 w-4" />
+                  <LogOut aria-hidden="true" className="h-4 w-4" />
                   {t('logout')}
                 </button>
               </div>

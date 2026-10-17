@@ -6,7 +6,8 @@
 // dialog is genuinely read-only — none of which lives in the map component itself.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import { toast } from 'sonner';
 import userEvent from '@testing-library/user-event';
 
 // Side-effect import: initialises the REAL i18next instance and registers it with
@@ -248,5 +249,86 @@ describe('legacy parcels without a boundary', () => {
     // The acreage lives inside a formatted label ("Area: 2.75 acres"), so match on the number.
     expect(screen.getByText(/2\.75/)).toBeInTheDocument();
     expect(screen.queryByText('No boundary')).not.toBeInTheDocument();
+  });
+});
+
+// window.confirm was blocking, unstyled and could not be translated; the delete now goes through
+// the shared danger ConfirmDialog (plan B1).
+describe('deleting a parcel asks in a danger ConfirmDialog, never window.confirm', () => {
+  const openDeleteDialog = async (user: ReturnType<typeof userEvent.setup>) => {
+    await screen.findByText('North Field');
+    await user.click(screen.getByRole('button', { name: 'Delete Parcel' }));
+    return screen.getByRole('dialog', { name: 'Delete this parcel?' });
+  };
+
+  it('UI-16: names the parcel and the consequence, focuses Cancel first, and deletes nothing on Cancel', async () => {
+    listParcels.mockResolvedValue([parcel()]);
+    const confirmSpy = vi.spyOn(window, 'confirm');
+    const user = userEvent.setup();
+    renderScreen();
+
+    const dialog = await openDeleteDialog(user);
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(dialog).toHaveAccessibleDescription(/North Field.*cannot be undone/);
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    expect(within(dialog).getByRole('button', { name: 'Delete Parcel' }).className).toContain('bg-danger-solid');
+
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(deleteParcel).not.toHaveBeenCalled();
+    expect(confirmSpy).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it('UI-16: Escape cancels without deleting', async () => {
+    listParcels.mockResolvedValue([parcel()]);
+    const user = userEvent.setup();
+    renderScreen();
+
+    await openDeleteDialog(user);
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(deleteParcel).not.toHaveBeenCalled();
+  });
+
+  it('UI-16: confirming deletes exactly that parcel once, reports success and reloads the list', async () => {
+    listParcels.mockResolvedValue([parcel(), parcel({ parcelId: 'parcel-2', name: 'South Field' })]);
+    const onParcelsChange = vi.fn();
+    const user = userEvent.setup();
+    render(<ManageParcels onClose={() => {}} onParcelsChange={onParcelsChange} />);
+
+    await screen.findByText('South Field');
+    await user.click(screen.getAllByRole('button', { name: 'Delete Parcel' })[1]);
+    const dialog = screen.getByRole('dialog', { name: 'Delete this parcel?' });
+    expect(dialog).toHaveTextContent('South Field');
+    await user.click(within(dialog).getByRole('button', { name: 'Delete Parcel' }));
+
+    await waitFor(() => expect(deleteParcel).toHaveBeenCalledTimes(1));
+    expect(deleteParcel).toHaveBeenCalledWith('parcel-2');
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Parcel deleted successfully.'));
+    expect(onParcelsChange).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(listParcels).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('UI-16: while the delete is in flight the dialog is busy and cannot be dismissed; a failure is reported and the dialog closes', async () => {
+    listParcels.mockResolvedValue([parcel()]);
+    let rejectDelete: (err: Error) => void = () => {};
+    deleteParcel.mockReturnValue(new Promise((_, reject) => (rejectDelete = reject)));
+    const user = userEvent.setup();
+    renderScreen();
+
+    const dialog = await openDeleteDialog(user);
+    await user.click(within(dialog).getByRole('button', { name: 'Delete Parcel' }));
+    expect(within(dialog).getByRole('button', { name: 'Delete Parcel' })).toHaveAttribute('aria-busy', 'true');
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    rejectDelete(new Error('network'));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(toast.error).toHaveBeenCalledWith('Could not delete parcel. Please try again.');
+    expect(deleteParcel).toHaveBeenCalledTimes(1);
+    // The parcel is still listed (nothing was removed client-side).
+    expect(screen.getByText('North Field')).toBeInTheDocument();
   });
 });

@@ -518,7 +518,7 @@ export const ParcelDrawMap = ({
             className="inline-flex items-center gap-1 rounded-lg border border-gray-300 bg-white/95 px-2 py-1.5 text-xs font-semibold text-gray-700 shadow-sm hover:bg-white"
           >
             <MapPin className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">{t('mapRecenter')}</span>
+            <span className="sr-only sm:not-sr-only">{t('mapRecenter')}</span>
           </button>
           {!readOnly && location && (
             <button
@@ -532,7 +532,7 @@ export const ParcelDrawMap = ({
               ) : (
                 <Crosshair className="h-3.5 w-3.5" />
               )}
-              <span className="hidden sm:inline">{t('locationUseMyLocation')}</span>
+              <span className="sr-only sm:not-sr-only">{t('locationUseMyLocation')}</span>
             </button>
           )}
           {!readOnly && (
@@ -543,7 +543,7 @@ export const ParcelDrawMap = ({
                 className="inline-flex items-center gap-1 rounded-lg border border-gray-300 bg-white/95 px-2 py-1.5 text-xs font-semibold text-gray-700 shadow-sm hover:bg-white"
               >
                 <RotateCcw className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">{t('mapRedraw')}</span>
+                <span className="sr-only sm:not-sr-only">{t('mapRedraw')}</span>
               </button>
               <button
                 type="button"
@@ -551,7 +551,7 @@ export const ParcelDrawMap = ({
                 className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white/95 px-2 py-1.5 text-xs font-semibold text-red-600 shadow-sm hover:bg-red-50"
               >
                 <Eraser className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">{t('mapClear')}</span>
+                <span className="sr-only sm:not-sr-only">{t('mapClear')}</span>
               </button>
             </>
           )}

@@ -1,5 +1,7 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
+import { enV2 } from './locales/v2.en';
+import { taV2 } from './locales/v2.ta';
 
 const resources = {
   en: {
@@ -814,7 +816,10 @@ allDeleted: 'All chats cleared successfully!',
       // Chat
       chatParcelLabel: 'Which land?',
       chatParcelAny: 'Not specific / all my land',
-      chatSourcesLabel: 'Sources'
+      chatSourcesLabel: 'Sources',
+
+      // 2026-10 plan keys (design system, routing, farm-first location, claim tracker…)
+      ...enV2
     }
   },
   ta: {
@@ -1238,7 +1243,7 @@ micError: 'மைக்ரோஃபோன் பிழை',
 
       // Claim wizard
       claimWizardTitle: 'புதிய பயிர் இழப்பு கோரிக்கை',
-      stepParcel: 'நிலம்',
+      stepParcel: 'நிலப் பகுதி',
       stepEvent: 'நிகழ்வு',
       stepDate: 'தேதி',
       stepArea: 'பாதிக்கப்பட்ட பகுதி',
@@ -1528,7 +1533,7 @@ micError: 'மைக்ரோஃபோன் பிழை',
       loginAccountConflict: 'இந்த மின்னஞ்சல் ஏற்கனவே வேறு கணக்குடன் இணைக்கப்பட்டுள்ளது. அந்தக் கணக்கில் உள்நுழையவும் அல்லது உதவியைத் தொடர்பு கொள்ளவும்.',
       loginServiceUnavailable: 'உள்நுழைவு சேவையை இப்போது அணுக முடியவில்லை. சில நிமிடங்களில் மீண்டும் முயற்சிக்கவும்.',
 
-      stepRelationship: 'உங்கள் நிலம்',
+      stepRelationship: 'நிலத்துடன் உங்கள் உறவு',
       selectRelationship: 'இந்த நிலத்துடன் உங்களுக்கு என்ன தொடர்பு?',
       relationshipStepHint: 'எந்த நில ஆவணங்கள் தேவை என்பதை இது எங்களுக்குச் சொல்லும்.',
       relationshipOptionalNote: 'விருப்பத்தேர்வு. இதைத் தவிர்த்துத் தொடரலாம்.',
@@ -1622,7 +1627,10 @@ micError: 'மைக்ரோஃபோன் பிழை',
 
       chatParcelLabel: 'எந்த நிலம்?',
       chatParcelAny: 'குறிப்பிட்டது இல்லை / என் எல்லா நிலமும்',
-      chatSourcesLabel: 'ஆதாரங்கள்'
+      chatSourcesLabel: 'ஆதாரங்கள்',
+
+      // 2026-10 plan keys — typed against enV2, so parity is checked at compile time
+      ...taV2
     }
   }
 };

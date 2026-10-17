@@ -43,6 +43,7 @@ import {
   farmerMayAppeal,
   adminModelHasSensitiveField,
   claimAppealSummary,
+  isHeldClaimDetail,
 } from './adminQueue';
 import type {
   AdminQueueEntry,
@@ -348,6 +349,24 @@ describe('queueEntryViewModel — shapes honest farmer-entry cards for admins', 
     expect('adminNote' in vm).toBe(false);
   });
 
+  it('ADM-5: reads the fields the backend actually sends (parcelCrop, nested assessment)', () => {
+    // serializeQueueEntry (backend services/adminQueue.service.js) sends the crop as `parcelCrop`
+    // and the AI-failure flag and decision reason inside `assessment`; the old flat names were
+    // never sent, so the crop showed "—" and the AI-failed badge never appeared.
+    const vm = queueEntryViewModel(
+      queueEntry({
+        crop: null,
+        aiFailed: false,
+        decisionReason: null,
+        parcelCrop: 'Paddy',
+        assessment: { status: 'failed', aiFailed: true, aiUncertain: false, reason: 'Assessment failed', decidedBy: null },
+      })
+    );
+    expect(vm.crop).toBe('Paddy');
+    expect(vm.aiFailed).toBe(true);
+    expect(vm.decisionReason).toBe('Assessment failed');
+  });
+
   it('reflects an attached appeal', () => {
     const vm = queueEntryViewModel(
       queueEntry({ hasAppeal: true, appealReason: 'Farmer disputes the computed area.' })
@@ -557,5 +576,46 @@ describe('admin detail affordances — the UI only "may do" what backend rules a
     // A model carrying an approver key must be flagged.
     expect(adminModelHasSensitiveField({ state: 'rejected', secret: 'ovr_secret' })).toBe(true);
     expect(adminModelHasSensitiveField({ state: 'rejected', overrideKey: 'ovr_secret_key' })).toBe(false);
+  });
+});
+
+// ── D8: held claims (plan B7) ──────────────────────────────────────────────────────────────
+// Mirrors adminOverrideRules.service.js isOverrideableFrom / isHeldAssessment and the queue's
+// ?held filter (adminQueue.service.js normalizeQueueFilters / buildPostMatch).
+
+describe('D8 held claims', () => {
+  const heldAssessment = { state: null, verification: { status: 'held' } } as unknown as AdminClaimDetail['assessment'];
+
+  it('ADM-1: a submitted claim may be overridden only when it is held; nothing else changes', () => {
+    expect(canOverrideFrom('submitted', { held: true })).toBe(true);
+    expect(canOverrideFrom('submitted', { held: false })).toBe(false);
+    expect(canOverrideFrom('submitted')).toBe(false);
+    for (const state of ['draft', 'withdrawn']) expect(canOverrideFrom(state, { held: true }), state).toBe(false);
+    for (const state of OVERRIDEABLE_STATES) expect(canOverrideFrom(state, { held: false }), state).toBe(true);
+
+    expect(isHeldClaimDetail(adminDetail({ state: 'submitted', assessment: heldAssessment }))).toBe(true);
+    expect(isHeldClaimDetail(adminDetail({ state: 'submitted', assessment: { ...heldAssessment!, held: true, verification: null } }))).toBe(true);
+    expect(isHeldClaimDetail(adminDetail({ state: 'submitted', assessment: { ...heldAssessment!, state: 'verified' } }))).toBe(false);
+    expect(isHeldClaimDetail(adminDetail({ state: 'submitted', assessment: { ...heldAssessment!, verification: { status: 'decided' } } }))).toBe(false);
+    expect(isHeldClaimDetail(adminDetail({ state: 'rejected', assessment: heldAssessment }))).toBe(false);
+    expect(isHeldClaimDetail(adminDetail({ state: 'submitted', assessment: null }))).toBe(false);
+    expect(isHeldClaimDetail(null)).toBe(false);
+
+    expect(canShowOverride(adminDetail({ state: 'submitted', assessment: heldAssessment }))).toBe(true);
+    expect(canShowOverride(adminDetail({ state: 'submitted', assessment: null }))).toBe(false);
+  });
+
+  it('ADM-1: the override form accepts a held submitted claim and still refuses a plain submitted one', () => {
+    expect(validateOverride({ ...overrideForm({ currentState: 'submitted' }), held: true })).toEqual({ ok: true });
+    expect(validateOverride({ ...overrideForm({ currentState: 'submitted' }), held: false })).toEqual({ ok: false, reason: 'notOverrideable' });
+    expect(validateOverride(overrideForm({ currentState: 'submitted' }))).toEqual({ ok: false, reason: 'notOverrideable' });
+  });
+
+  it('ADM-2: the queue query sends held=true / held=false and nothing for "any"; rows carry the held flag', () => {
+    expect(buildAdminQueryString({ held: 'true' })).toBe('?held=true');
+    expect(buildAdminQueryString({ held: 'false', page: 2 })).toBe('?page=2&held=false');
+    expect(buildAdminQueryString({ held: '' })).toBe('');
+    expect(queueEntryViewModel(queueEntry({ held: true })).held).toBe(true);
+    expect(queueEntryViewModel(queueEntry()).held).toBe(false);
   });
 });
