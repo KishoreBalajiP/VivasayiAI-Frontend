@@ -3,10 +3,14 @@ import {
   CLAIM_EVENT_TYPES,
   CLAIM_EVENT_TYPE_SET,
   CLAIM_WINDOW_DAYS,
+  CLAIM_DOCUMENT_MAX,
+  CLAIM_WIZARD_STEPS,
   EVIDENCE_MUTABLE_STATES,
+  MIN_PHOTOS_TO_SUBMIT,
   TERMINAL_CLAIM_STATES,
   addStagedEvidence,
   buildReviewSummary,
+  canGotoStep,
   canMutateEvidence,
   canRequestVerification,
   canResubmitClaim,
@@ -18,8 +22,13 @@ import {
   claimEventLabelKey,
   claimStateLabelKey,
   createEmptyDraft,
+  defaultDocumentCategory,
+  documentGroupStatus,
+  eventStepMissing,
   evidenceStatusLabelKey,
+  evidenceStepMissing,
   formatClaimDate,
+  furthestValidStepIndex,
   generateIdempotencyKey,
   isValidIdempotencyKey,
   isTerminalClaimState,
@@ -30,6 +39,7 @@ import {
   resolveClaimsListState,
   showsVerificationResult,
   stepCanAdvance,
+  usablePhotoCount,
   validateClaimDate,
   verificationResultModel,
   verificationRulesKey,
@@ -42,6 +52,7 @@ import type {
   ClaimEvidenceEntry,
   GeoJsonPolygon,
   LossClaim,
+  OwnershipDocumentCategory,
   ParcelRecord,
   VerificationDecision,
 } from '../types';
@@ -419,33 +430,66 @@ describe('evidence staging', () => {
 });
 
 describe('stepCanAdvance', () => {
-  it('gates each step on its honest prerequisite', () => {
+  it('WZ-2: gates each step on its honest prerequisite (Event needs type, date AND area)', () => {
     expect(stepCanAdvance(createEmptyDraft())).toBe(false); // no parcel yet
 
     let d = createEmptyDraft();
     d = wizardReducer(d, { type: 'select.parcel', parcelId: 'par_123', geometry: POLYGON });
+    expect(stepCanAdvance(d)).toBe(true);
     d = wizardReducer(d, { type: 'next' });
     expect(stepCanAdvance(d)).toBe(true); // relationship is optional
     d = wizardReducer(d, { type: 'next' });
+    expect(d.step).toBe('event');
     expect(stepCanAdvance(d)).toBe(false); // event not chosen
+    expect(eventStepMissing(d)).toEqual(['event_type', 'date']);
     d = wizardReducer(d, { type: 'select.event', eventType: 'drought' });
-    expect(stepCanAdvance(d)).toBe(true);
-    d = wizardReducer(d, { type: 'next' });
     expect(stepCanAdvance(d)).toBe(false); // date not chosen
     d = wizardReducer(d, { type: 'select.date', eventDate: new Date().toISOString().slice(0, 10) });
+    // The area carries the selected parcel's REAL geometry forward (whole-parcel claim) — it is
+    // never empty once a parcel is chosen, so the step is advanceable by design (ADR-019 P8).
     expect(stepCanAdvance(d)).toBe(true);
-    d = wizardReducer(d, { type: 'next' });
-    // The area step carries the selected parcel's REAL geometry forward (whole-parcel claim) —
-    // it is never empty once a parcel is chosen, so it is advanceable by design (ADR-019 P8).
+    // Clearing the area blocks the step again; it never falls back to the parcel.
+    const cleared = wizardReducer(d, { type: 'select.area', geometry: null });
+    expect(stepCanAdvance(cleared)).toBe(false);
+    expect(eventStepMissing(cleared)).toEqual(['area']);
     d = wizardReducer(d, { type: 'select.area', geometry: POLYGON });
     expect(stepCanAdvance(d)).toBe(true);
   });
-  it('evidence step is always advanceable (optional before submit)', () => {
+  it('WZ-2: an out-of-window or future date keeps the Event step closed', () => {
+    let d = wizardReducer(createEmptyDraft(), { type: 'select.parcel', parcelId: 'par_123', geometry: POLYGON });
+    d = { ...wizardReducer(d, { type: 'select.event', eventType: 'flood' }), step: 'event' };
+    d = wizardReducer(d, { type: 'select.date', eventDate: new Date(Date.now() + 86400000).toISOString().slice(0, 10) });
+    expect(stepCanAdvance(d)).toBe(false);
+    expect(eventStepMissing(d)).toEqual(['date']);
+  });
+  it('WZ-4: the evidence step needs at least MIN_PHOTOS_TO_SUBMIT usable photos and no missing files', () => {
     let d = createEmptyDraft();
     d = wizardReducer(d, { type: 'select.parcel', parcelId: 'par_123', geometry: POLYGON });
-    for (let i = 0; i < 5; i++) d = wizardReducer(d, { type: 'next' });
+    for (let i = 0; i < 3; i++) d = wizardReducer(d, { type: 'next' });
     expect(d.step).toBe('evidence');
+    expect(MIN_PHOTOS_TO_SUBMIT).toBe(1);
+    expect(stepCanAdvance(d)).toBe(false);
+    expect(evidenceStepMissing(d)).toEqual(['photos']);
+
+    d = wizardReducer(d, { type: 'evidence.add', entry: { key: 'ev_1', name: 'a.jpg', size: 10, detectedType: 'jpeg' } });
     expect(stepCanAdvance(d)).toBe(true);
+
+    // A photo restored without its file does not count, and blocks until chosen again or removed.
+    const restored = { ...d, evidence: [{ ...d.evidence[0], status: 'missing_file' as const }] };
+    expect(usablePhotoCount(restored)).toBe(0);
+    expect(evidenceStepMissing(restored)).toEqual(['photos', 'missing_files']);
+    const relinked = wizardReducer(restored, { type: 'evidence.relink', key: 'ev_1', name: 'b.jpg', size: 11, detectedType: 'jpeg' });
+    expect(relinked.evidence[0]).toMatchObject({ key: 'ev_1', name: 'b.jpg', status: 'staged' });
+    expect(stepCanAdvance(relinked)).toBe(true);
+
+    // Documents are optional, but a document that lost its file also blocks.
+    const withLostDoc = wizardReducer(d, {
+      type: 'document.add',
+      entry: { key: 'doc_1', name: 'patta.jpg', size: 5, detectedType: 'jpeg', category: 'land_record' },
+    });
+    expect(stepCanAdvance(withLostDoc)).toBe(true);
+    const lostDoc = { ...withLostDoc, documents: [{ ...withLostDoc.documents[0], status: 'missing_file' as const }] };
+    expect(evidenceStepMissing(lostDoc)).toEqual(['missing_files']);
   });
 });
 
@@ -459,6 +503,8 @@ describe('buildReviewSummary', () => {
     d = wizardReducer(d, { type: 'select.event', eventType: 'flood' });
     d = wizardReducer(d, { type: 'select.date', eventDate: today });
     d = wizardReducer(d, { type: 'select.area', geometry: POLYGON });
+    // At least one photo is required to submit (MIN_PHOTOS_TO_SUBMIT).
+    d = wizardReducer(d, { type: 'evidence.add', entry: { key: 'ev_1', name: 'crop.jpg', size: 10, detectedType: 'jpeg' } });
     return d;
   };
 
@@ -502,7 +548,7 @@ describe('buildReviewSummary', () => {
     expect(summary.claimedAreaAcres).toBeNull();
     expect(summary.affectedIsWholeParcel).toBe(false);
     // And the wizard cannot advance past the area step.
-    expect(stepCanAdvance({ ...cleared, step: 'area' })).toBe(false);
+    expect(stepCanAdvance({ ...cleared, step: 'event' })).toBe(false);
   });
 
   it('treats a null area selection as a real clear, not a no-op', () => {
@@ -531,6 +577,173 @@ describe('buildReviewSummary', () => {
     const last = completeDraft();
     const noGeometry = { ...last, geometry: null };
     expect(buildReviewSummary(noGeometry, [PARCEL]).reason).toBe('no_geometry');
+  });
+});
+
+// ── 7b. Five-step wizard: steps, documents, goto, locking (plan B3) ─────────────────────────
+
+describe('five-step wizard', () => {
+  const today = new Date().toISOString().slice(0, 10);
+  const readyDraft = () => {
+    let d = createEmptyDraft();
+    d = wizardReducer(d, { type: 'select.parcel', parcelId: 'par_123', geometry: POLYGON });
+    d = wizardReducer(d, { type: 'select.event', eventType: 'flood' });
+    d = wizardReducer(d, { type: 'select.date', eventDate: today });
+    d = wizardReducer(d, { type: 'evidence.add', entry: { key: 'ev_1', name: 'crop.jpg', size: 10, detectedType: 'jpeg' } });
+    return d;
+  };
+  const addDoc = (d: ReturnType<typeof createEmptyDraft>, key: string, category: OwnershipDocumentCategory) =>
+    wizardReducer(d, { type: 'document.add', entry: { key, name: `${key}.jpg`, size: 10, detectedType: 'jpeg', category } });
+
+  it('WZ-1: has exactly five steps in order and walks them with next/back', () => {
+    expect(CLAIM_WIZARD_STEPS).toEqual(['parcel', 'relationship', 'event', 'evidence', 'review']);
+    let d = readyDraft();
+    const visited = [d.step];
+    for (let i = 0; i < 6; i++) {
+      d = wizardReducer(d, { type: 'next' });
+      visited.push(d.step);
+    }
+    expect(visited).toEqual(['parcel', 'relationship', 'event', 'evidence', 'review', 'review', 'review']);
+    expect(d.reachedStep).toBe('review');
+    d = wizardReducer(d, { type: 'back' });
+    expect(d.step).toBe('evidence');
+    // Going back never lowers the furthest step reached.
+    expect(d.reachedStep).toBe('review');
+  });
+
+  it('WZ-1: an empty draft starts with no documents, no claim and the parcel step reached', () => {
+    const d = createEmptyDraft();
+    expect(d).toMatchObject({ step: 'parcel', reachedStep: 'parcel', documents: [], claimId: null });
+    expect(CLAIM_DOCUMENT_MAX).toBe(5);
+  });
+
+  it('WZ-6: a tenant needs two document groups, each marked satisfied by any of its categories', () => {
+    expect(documentGroupStatus('tenant', [])).toEqual([
+      { group: ['lease_agreement'], satisfied: false },
+      { group: ['land_record', 'ownership_deed', 'tax_receipt'], satisfied: false },
+    ]);
+    let d = wizardReducer(readyDraft(), { type: 'select.relationship', relationship: 'tenant' });
+    d = addDoc(d, 'doc_1', 'tax_receipt');
+    expect(documentGroupStatus('tenant', d.documents).map((g) => g.satisfied)).toEqual([false, true]);
+    d = addDoc(d, 'doc_2', 'lease_agreement');
+    expect(documentGroupStatus('tenant', d.documents).map((g) => g.satisfied)).toEqual([true, true]);
+    // A document whose file was lost does not satisfy anything.
+    const lost = { ...d, documents: d.documents.map((doc) => ({ ...doc, status: 'missing_file' as const })) };
+    expect(documentGroupStatus('tenant', lost.documents).map((g) => g.satisfied)).toEqual([false, false]);
+  });
+
+  it('WZ-6: the default category is the first category of the first group not yet covered', () => {
+    expect(defaultDocumentCategory('tenant', [])).toBe('lease_agreement');
+    const afterLease = addDoc(readyDraft(), 'doc_1', 'lease_agreement').documents;
+    expect(defaultDocumentCategory('tenant', afterLease)).toBe('land_record');
+    expect(defaultDocumentCategory('authorised_cultivator', [])).toBe('authorization_letter');
+    expect(defaultDocumentCategory('heir', addDoc(readyDraft(), 'doc_1', 'ownership_deed').documents)).toBe('identity_proof');
+    // Everything covered, or no relationship given: the first category.
+    expect(defaultDocumentCategory('owner', addDoc(readyDraft(), 'doc_1', 'land_record').documents)).toBe('land_record');
+    expect(defaultDocumentCategory(null, [])).toBe('land_record');
+  });
+
+  it('WZ-7: without a relationship there are no groups (the UI shows generic guidance)', () => {
+    expect(documentGroupStatus(null, [])).toEqual([]);
+  });
+
+  it('WZ-6: documents are capped, validated, and an attached one can be neither removed nor recategorised', () => {
+    let d = readyDraft();
+    for (let i = 0; i < 7; i++) d = addDoc(d, `doc_${i}`, 'land_record');
+    expect(d.documents).toHaveLength(CLAIM_DOCUMENT_MAX);
+    expect(addDoc(readyDraft(), 'doc_x', 'passport' as OwnershipDocumentCategory).documents).toHaveLength(0);
+
+    d = addDoc(readyDraft(), 'doc_1', 'land_record');
+    d = wizardReducer(d, { type: 'document.category', key: 'doc_1', category: 'ownership_deed' });
+    expect(d.documents[0].category).toBe('ownership_deed');
+    d = wizardReducer(d, { type: 'document.uploading', key: 'doc_1' });
+    d = wizardReducer(d, { type: 'document.uploaded', key: 'doc_1', uploadId: 'up_1' });
+    d = wizardReducer(d, { type: 'document.attaching', key: 'doc_1' });
+    d = wizardReducer(d, { type: 'document.failed', key: 'doc_1', errorKey: 'serverError', failedPhase: 'attach' });
+    // The upload id survives an attach failure, so a retry only attaches.
+    expect(d.documents[0]).toMatchObject({ status: 'failed', uploadId: 'up_1', failedPhase: 'attach' });
+    d = wizardReducer(d, { type: 'document.attached', key: 'doc_1', evidenceId: 'ev_own_1' });
+    expect(d.documents[0]).toMatchObject({ status: 'attached', evidenceId: 'ev_own_1', uploadId: 'up_1' });
+    expect(wizardReducer(d, { type: 'document.remove', key: 'doc_1' }).documents).toHaveLength(1);
+    expect(wizardReducer(d, { type: 'document.category', key: 'doc_1', category: 'other' }).documents[0].category).toBe('ownership_deed');
+  });
+
+  it('WZ-9: goto opens only steps already reached and still valid', () => {
+    let d = readyDraft();
+    // Nothing reached beyond the parcel yet.
+    expect(wizardReducer(d, { type: 'goto', step: 'review' }).step).toBe('parcel');
+    for (let i = 0; i < 4; i++) d = wizardReducer(d, { type: 'next' });
+    expect(d.step).toBe('review');
+    expect(canGotoStep(d, 'event')).toBe(true);
+    const atEvent = wizardReducer(d, { type: 'goto', step: 'event' });
+    expect(atEvent.step).toBe('event');
+    // Back to review in one jump (already reached, everything still valid)…
+    expect(wizardReducer(atEvent, { type: 'goto', step: 'review' }).step).toBe('review');
+    // …but not once the area was cleared: Event is the furthest valid step again.
+    const cleared = wizardReducer(atEvent, { type: 'select.area', geometry: null });
+    expect(canGotoStep(cleared, 'review')).toBe(false);
+    expect(wizardReducer(cleared, { type: 'goto', step: 'review' }).step).toBe('event');
+    expect(furthestValidStepIndex(cleared)).toBe(CLAIM_WIZARD_STEPS.indexOf('event'));
+  });
+
+  it('WZ-9: the review summary lists the relationship, photos and documents, and needs a photo', () => {
+    let d = wizardReducer(readyDraft(), { type: 'select.relationship', relationship: 'owner' });
+    d = addDoc(d, 'doc_1', 'land_record');
+    const summary = buildReviewSummary(d, [PARCEL]);
+    expect(summary.ok).toBe(true);
+    expect(summary.relationship).toBe('owner');
+    expect(summary.photos).toEqual([{ key: 'ev_1', name: 'crop.jpg', status: 'staged' }]);
+    expect(summary.documents).toEqual([{ key: 'doc_1', name: 'doc_1.jpg', category: 'land_record', status: 'staged' }]);
+
+    const noPhotos = wizardReducer(d, { type: 'evidence.remove', key: 'ev_1' });
+    expect(buildReviewSummary(noPhotos, [PARCEL])).toMatchObject({ ok: false, reason: 'no_photos' });
+    const lost = { ...d, evidence: d.evidence.map((e) => ({ ...e, status: 'missing_file' as const })) };
+    expect(buildReviewSummary(lost, [PARCEL])).toMatchObject({ ok: false, reason: 'missing_files' });
+  });
+
+  it('WZ-17: the idempotency key is stable across evidence, navigation and claim creation', () => {
+    const d = readyDraft();
+    const key = d.idempotencyKey;
+    let next = wizardReducer(d, { type: 'next' });
+    next = wizardReducer(next, { type: 'evidence.uploading', key: 'ev_1' });
+    next = wizardReducer(next, { type: 'evidence.failed', key: 'ev_1', errorKey: 'networkError' });
+    next = addDoc(next, 'doc_1', 'land_record');
+    next = wizardReducer(next, { type: 'claim.created', claimId: 'c_1' });
+    next = wizardReducer(next, { type: 'evidence.uploaded', key: 'ev_1', uploadId: 'img_1' });
+    // Re-selecting the same values is not a change either.
+    next = wizardReducer(next, { type: 'select.event', eventType: 'flood' });
+    expect(next.idempotencyKey).toBe(key);
+    expect(next.claimId).toBe('c_1');
+  });
+
+  it('WZ-17: changing a field sent on create before the claim exists issues a new key', () => {
+    const d = readyDraft();
+    const changed = wizardReducer(d, { type: 'select.event', eventType: 'drought' });
+    expect(changed.eventType).toBe('drought');
+    expect(isValidIdempotencyKey(changed.idempotencyKey ?? '')).toBe(true);
+    // Otherwise a lost create answer + retry would hand back the claim with the OLD answers.
+    expect(changed.idempotencyKey).not.toBe(d.idempotencyKey);
+  });
+
+  it('WZ-17: once the claim exists the fields sent on create are locked', () => {
+    const saved = wizardReducer(readyDraft(), { type: 'claim.created', claimId: 'c_1' });
+    expect(wizardReducer(saved, { type: 'select.event', eventType: 'pest' })).toBe(saved);
+    expect(wizardReducer(saved, { type: 'select.date', eventDate: '2020-01-01' })).toBe(saved);
+    expect(wizardReducer(saved, { type: 'select.area', geometry: null })).toBe(saved);
+    expect(wizardReducer(saved, { type: 'select.relationship', relationship: 'tenant' })).toBe(saved);
+    expect(wizardReducer(saved, { type: 'select.parcel', parcelId: 'par_other', geometry: PARTIAL_POLYGON })).toBe(saved);
+    // Evidence stays editable.
+    expect(addDoc(saved, 'doc_1', 'land_record').documents).toHaveLength(1);
+  });
+
+  it('WZ-17: restore replaces the whole draft and reset starts a fresh one with a new key', () => {
+    const saved = wizardReducer(readyDraft(), { type: 'claim.created', claimId: 'c_1' });
+    const restored = wizardReducer(createEmptyDraft(), { type: 'restore', draft: saved });
+    expect(restored).toBe(saved);
+    const reset = wizardReducer(saved, { type: 'reset' });
+    expect(reset.claimId).toBeNull();
+    expect(reset.idempotencyKey).not.toBe(saved.idempotencyKey);
+    expect(wizardReducer(reset, { type: 'idempotency.set', key: 'bad key' }).idempotencyKey).toBe(reset.idempotencyKey);
   });
 });
 
@@ -574,21 +787,22 @@ describe('claimDetailViewModel', () => {
   it('null claim yields a safe empty model', () => {
     const model = claimDetailViewModel(null, null);
     expect(model.state).toBe('draft');
-    expect(model.canVerify).toBe(false);
+    // Plan B4: the farmer view model has no verify affordance at all (checks start on their own).
+    expect('canVerify' in model).toBe(false);
     expect(model.canSubmit).toBe(false);
     expect(viewModelHasSensitiveField(model)).toBe(false);
   });
   it('exposes affordances from backend state only', () => {
-    // A claim still in `draft` must offer submit (and NOT verify — the backend rejects it) so it
-    // is never stranded unsubmitted.
+    // A claim still in `draft` must offer submit so it is never stranded unsubmitted. No state
+    // offers a verify action any more (plan B4): checks start automatically after submit.
     const draft = claimDetailViewModel(claimFor('draft'), null);
     expect(draft.canSubmit).toBe(true);
-    expect(draft.canVerify).toBe(false);
+    expect('canVerify' in draft).toBe(false);
 
     const submitted = claimDetailViewModel(claimFor('submitted'), null);
     expect(submitted.canWithdraw).toBe(true);
     expect(submitted.canResubmit).toBe(false);
-    expect(submitted.canVerify).toBe(true);
+    expect('canVerify' in submitted).toBe(false);
     expect(submitted.canEditEvidence).toBe(true);
     expect(submitted.canSubmit).toBe(false);
 
@@ -601,7 +815,7 @@ describe('claimDetailViewModel', () => {
     const terminal = claimDetailViewModel(claimFor('rejected'), null);
     expect(terminal.canWithdraw).toBe(false);
     expect(terminal.canResubmit).toBe(false);
-    expect(terminal.canVerify).toBe(false);
+    expect('canVerify' in terminal).toBe(false);
     expect(terminal.canSubmit).toBe(false);
     expect(terminal.canEditEvidence).toBe(false);
     expect(terminal.isTerminal).toBe(true);

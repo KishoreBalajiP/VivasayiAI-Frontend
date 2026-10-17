@@ -12,11 +12,13 @@
 import { ApiClientError, friendlyMessageKey, request } from './client';
 import { uploadImage } from '../api';
 import { detectImageType } from '../utils/imageValidation';
+import { parseClaimProgress } from '../utils/claimProgress';
 import type {
   Appeal,
   AppealInput,
   ClaimAssessment,
   ClaimCreateInput,
+  ClaimProgress,
   ClaimEvidenceEntry,
   EvidenceDeleteResult,
   EvidencePresign,
@@ -71,6 +73,21 @@ export const submitClaim = async (claimId: string): Promise<LossClaim> => {
   return envelope.data.claim;
 };
 
+// The same submit, sending a caller-chosen x-request-id. The claim wizard sends
+// fe_<idempotencyKey>_s<attempt> (backend requestLogger accepts [A-Za-z0-9._-]{8,64}), so one
+// browser attempt can be matched to the request log and the verification jobs it queued. A 503
+// here means "saved, but checks could not be scheduled"; repeating the submit is safe.
+export const submitClaimTracked = async (
+  claimId: string,
+  options: { requestId?: string } = {}
+): Promise<LossClaim> => {
+  const envelope = await request<{ claim: LossClaim }>(`/claims/${claimId}/submit`, {
+    method: 'POST',
+    ...(options.requestId ? { headers: { 'x-request-id': options.requestId } } : {}),
+  });
+  return envelope.data.claim;
+};
+
 // POST /claims/:claimId/withdraw — draft|submitted → withdrawn (terminal).
 export const withdrawClaim = async (claimId: string): Promise<LossClaim> => {
   const envelope = await request<{ claim: LossClaim }>(`/claims/${claimId}/withdraw`, {
@@ -89,6 +106,10 @@ export const resubmitClaim = async (claimId: string): Promise<LossClaim> => {
 
 // POST /claims/:claimId/verify — requests the backend's deterministic verification. NO body is
 // sent: any client-supplied result/state/area/AI payload is structurally ignored by the server.
+//
+// NOT used by the farmer UI (plan B4): checks start on their own after submit and the claim
+// tracker only reads GET /claims/:claimId/progress. Kept for reviewer tooling and compatibility;
+// TRK-6 fails if any farmer screen calls it.
 export const verifyClaimRequest = async (claimId: string): Promise<VerificationDecision> => {
   const envelope = await request<{ verification: VerificationDecision }>(
     `/claims/${claimId}/verify`,
@@ -101,9 +122,34 @@ export const verifyClaimRequest = async (claimId: string): Promise<VerificationD
 // larger read rate limit (contract §2) and may advance ONE queued verification step on the
 // server, so polling makes progress; poll every 10 s or slower while the claim is `submitted`.
 // `claim` carries the same assessment (held / components / decision) GET /claims/:claimId does.
-export const getClaimVerification = async (claimId: string): Promise<ClaimVerificationStatus> => {
-  const envelope = await request<ClaimVerificationStatus>(`/claims/${claimId}/verification`);
+// Since ADR-022 it also carries `progress` (raw; parse it). The tracker reads it only as the
+// legacy fallback when /progress is missing.
+export const getClaimVerification = async (
+  claimId: string,
+  options: { signal?: AbortSignal } = {}
+): Promise<ClaimVerificationStatus> => {
+  const envelope = await request<ClaimVerificationStatus>(`/claims/${claimId}/verification`, {
+    ...(options.signal ? { signal: options.signal } : {}),
+  });
   return envelope.data;
+};
+
+// Progress reads are polled: a hung request must not hold the single polling slot for the
+// client's generic 60 s timeout.
+const PROGRESS_TIMEOUT_MS = 20_000;
+
+// GET /claims/:claimId/progress — the farmer progress contract (progress-v1). Owner-scoped (404
+// for anyone else), read rate limit. Returns the PARSED object, or null when the response is not
+// a progress-v1 object this client understands (wrong contractVersion or a broken shape).
+export const getClaimProgress = async (
+  claimId: string,
+  options: { signal?: AbortSignal } = {}
+): Promise<ClaimProgress | null> => {
+  const envelope = await request<{ progress?: unknown }>(`/claims/${claimId}/progress`, {
+    timeoutMs: PROGRESS_TIMEOUT_MS,
+    ...(options.signal ? { signal: options.signal } : {}),
+  });
+  return parseClaimProgress(envelope.data?.progress);
 };
 
 // ── Appeals (farmer side: routes/claims.js → appeal.controller.js) ─────────────────────────

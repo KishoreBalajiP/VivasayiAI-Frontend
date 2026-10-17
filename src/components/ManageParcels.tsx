@@ -22,6 +22,7 @@ import {
   type UpdateParcelInput,
 } from '../api';
 import { LazyParcelDrawMap } from './LazyParcelDrawMap';
+import { Button, ConfirmDialog } from './ui';
 import { hasUsableGeometry } from '../utils/parcelGeometry';
 import type { ParcelRecord } from '../types';
 
@@ -41,6 +42,8 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingParcel, setEditingParcel] = useState<ParcelRecord | null>(null);
   const [deletingParcelId, setDeletingParcelId] = useState<string | null>(null);
+  // The parcel whose delete is awaiting confirmation (the ConfirmDialog is open while set).
+  const [pendingDelete, setPendingDelete] = useState<ParcelRecord | null>(null);
 
   const [name, setName] = useState('');
   const [crop, setCrop] = useState('');
@@ -168,9 +171,11 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
     }
   };
 
+  // Runs from the danger ConfirmDialog (it replaced window.confirm). The dialog stays open and
+  // busy (not dismissable) while the request is in flight, then closes either way; a failure is
+  // reported by toast and the farmer can start the delete again.
   const handleDelete = async (parcelId: string) => {
-    if (!window.confirm(t('confirmDeleteParcelHint'))) return;
-
+    if (deletingParcelId) return;
     setDeletingParcelId(parcelId);
     try {
       await deleteParcel(parcelId);
@@ -186,6 +191,7 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
       );
     } finally {
       setDeletingParcelId(null);
+      setPendingDelete(null);
     }
   };
 
@@ -239,7 +245,8 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
             <Edit className="h-4 w-4" />
           </button>
           <button
-            onClick={() => handleDelete(parcel.parcelId)}
+            type="button"
+            onClick={() => setPendingDelete(parcel)}
             disabled={deletingParcelId === parcel.parcelId}
             className="rounded-lg p-2 text-gray-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
             aria-label={t('deleteParcel')}
@@ -271,7 +278,7 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
           <div className="w-10" />
         </div>
         <div className="flex flex-1 items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-emerald-600" />
+          <Loader2 aria-hidden="true" className="h-8 w-8 animate-spin text-brand-700" />
         </div>
       </div>
     );
@@ -294,12 +301,9 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
         <div className="flex flex-1 items-center justify-center px-4">
           <div className="text-center">
             <p className="text-sm text-red-700">{t('claimsLoadFailed')}</p>
-            <button
-              onClick={loadParcels}
-              className="mt-3 rounded-full border border-gray-300 px-4 py-1.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-            >
+            <Button variant="secondary" size="sm" onClick={loadParcels} className="mt-3">
               {t('retry')}
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -318,13 +322,9 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
           <ArrowLeft className="h-5 w-5" />
         </button>
         <h2 className="text-lg font-bold text-gray-900">{t('manageParcelsTitle')}</h2>
-        <button
-          onClick={openAddModal}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-green-700 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:from-emerald-700 hover:to-green-800"
-        >
-          <Plus className="h-4 w-4" />
-          <span className="hidden sm:inline">{t('addParcel')}</span>
-        </button>
+        <Button onClick={openAddModal} className="shrink-0" leadingIcon={<Plus className="h-4 w-4" />}>
+          <span className="sr-only sm:not-sr-only">{t('addParcel')}</span>
+        </Button>
       </header>
 
       {/* Content */}
@@ -337,12 +337,9 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
               </div>
               <h3 className="text-base font-bold text-gray-900">{t('noParcelsTitle')}</h3>
               <p className="max-w-md text-sm text-gray-600">{t('noParcelsBody')}</p>
-              <button
-                onClick={openAddModal}
-                className="mt-1 rounded-xl bg-gradient-to-r from-emerald-600 to-green-700 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:from-emerald-700 hover:to-green-800"
-              >
+              <Button onClick={openAddModal} className="mt-1">
                 {t('addFirstParcel')}
-              </button>
+              </Button>
             </div>
           ) : (
             <>
@@ -452,20 +449,17 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
             )}
 
             <div className="flex gap-3">
-              <button
-                onClick={closeModal}
-                className="flex-1 rounded-xl border border-gray-300 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-              >
+              <Button variant="secondary" onClick={closeModal} className="flex-1">
                 {t('cancel')}
-              </button>
-              <button
+              </Button>
+              <Button
                 onClick={handleSubmit}
-                disabled={isSubmitting}
-                className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-green-700 py-2.5 text-sm font-semibold text-white shadow-sm hover:from-emerald-700 hover:to-green-800 disabled:opacity-60 disabled:cursor-not-allowed"
+                loading={isSubmitting}
+                leadingIcon={<Check className="h-4 w-4" />}
+                className="flex-1"
               >
-                {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
                 {isSubmitting ? t('savingProfile') : t(editingParcel ? 'updateProfile' : 'saveProfile')}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -503,17 +497,30 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
               {t('parcelAreaAcresLabel', { acres: viewingParcel.calculatedAreaAcres })}
             </p>
             <div className="mt-3 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setViewingParcel(null)}
-                className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800"
-              >
-                {t('close')}
-              </button>
+              <Button onClick={() => setViewingParcel(null)}>{t('close')}</Button>
             </div>
           </div>
         </div>
       )}
+
+      {/* Delete confirmation (replaces window.confirm). Danger tone, so focus starts on Cancel. */}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        tone="danger"
+        title={t('confirmDeleteParcel')}
+        body={
+          <>
+            {pendingDelete?.name && <p className="font-semibold text-ink">{pendingDelete.name}</p>}
+            <p>{t('confirmDeleteParcelHint')}</p>
+          </>
+        }
+        confirmLabel={t('deleteParcel')}
+        busy={deletingParcelId !== null}
+        onConfirm={() => {
+          if (pendingDelete) void handleDelete(pendingDelete.parcelId);
+        }}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 };

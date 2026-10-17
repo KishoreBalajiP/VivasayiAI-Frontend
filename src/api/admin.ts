@@ -14,10 +14,12 @@ import type {
   AdminClaimDetail,
   AdminQueueFilters,
   AdminQueueResponse,
+  AdminVerificationDiagnostics,
   DashboardResponse,
   InvestigationResponse,
   OverrideInput,
   OverrideResult,
+  RequeueJobsResult,
 } from '../types';
 
 // GET /admin/claims — the read-only review queue. Filters are normalized+validated
@@ -59,6 +61,30 @@ export const getAdminDashboard = async (rangeDays = 90): Promise<DashboardRespon
 // GET /admin/investigation — observation-only fraud signals (never mutates a claim).
 export const getInvestigation = async (rangeDays = 90): Promise<InvestigationResponse> => {
   const envelope = await request<InvestigationResponse>(`/admin/investigation?rangeDays=${rangeDays}`);
+  return envelope.data;
+};
+
+// GET /admin/claims/:claimId/verification-diagnostics — ADR-022 (D9). Read-only: the claim's
+// verification jobs (attempts, last error code/kind, timestamps), evidence rows, review cases, the
+// audit trail and the farmer's own progress object side by side.
+export const getVerificationDiagnostics = async (claimId: string): Promise<AdminVerificationDiagnostics> => {
+  const envelope = await request<AdminVerificationDiagnostics>(`/admin/claims/${claimId}/verification-diagnostics`);
+  return envelope.data;
+};
+
+// POST /admin/claims/:claimId/jobs/requeue — ADR-022 (D9). Re-queues the claim's DEAD jobs after a
+// person dealt with the cause; recorded as AdminAction `jobs_requeued` + a ClaimAudit row. Body
+// `{ reason (10-2000 chars), steps? }`; 409 unless the claim is `submitted`. A repeat while the new
+// jobs are active changes nothing (`idempotent: true`). Not wired into the admin UI yet: the
+// diagnostics panel is read-only (plan B7).
+export const requeueClaimJobs = async (
+  claimId: string,
+  input: { reason: string; steps?: string[] }
+): Promise<RequeueJobsResult> => {
+  const envelope = await request<RequeueJobsResult>(`/admin/claims/${claimId}/jobs/requeue`, {
+    method: 'POST',
+    body: input,
+  });
   return envelope.data;
 };
 

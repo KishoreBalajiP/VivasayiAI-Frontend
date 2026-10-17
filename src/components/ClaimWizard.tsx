@@ -1,39 +1,70 @@
-import { useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState, type Ref } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, ArrowRight, Loader2, Plus, X, Check, MapPinned, Map } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Loader2, Map as MapIcon, MapPinned, Plus, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
-import { ApiClientError, friendlyMessageKey } from '../api/client';
 import { validateImageFile } from '../utils/imageValidation';
 import { useClaimsViewport } from '../utils/claimResponsive';
-import { LazyParcelDrawMap } from './LazyParcelDrawMap';
 import { hasUsableGeometry } from '../utils/parcelGeometry';
+import { Alert, Button, ConfirmDialog, Stepper, cn } from './ui';
+import { EventStep } from './claims/wizard/EventStep';
+import { EvidenceStep, type InlineMessage } from './claims/wizard/EvidenceStep';
+import { ReviewStep } from './claims/wizard/ReviewStep';
+import { StepShell } from './claims/wizard/StepShell';
+import { SubmissionStatus } from './claims/wizard/SubmissionStatus';
 import {
   CLAIMANT_RELATIONSHIPS,
-  CLAIM_EVENT_TYPES,
+  CLAIM_DOCUMENT_MAX,
+  CLAIM_EVIDENCE_MAX,
   CLAIM_WIZARD_STEPS,
   buildReviewSummary,
-  canStageEvidence,
-  claimEventLabelKey,
+  canGotoStep,
   claimantRelationshipLabelKey,
   createEmptyDraft,
-  formatClaimDate,
-  generateIdempotencyKey,
-  isValidIdempotencyKey,
+  defaultDocumentCategory,
+  eventStepMissing,
+  evidenceStepMissing,
+  newStagedKey,
   stepCanAdvance,
-  validateClaimDate,
   wizardReducer,
-  type ClaimDraft,
   type ClaimWizardStep,
-  type StagedEvidence,
+  type StagedDocument,
+  type StagedImageType,
 } from '../utils/claimFlow';
+import {
+  errorStatus,
+  retrySubmissionItem,
+  runClaimSubmission,
+  type SubmissionDeps,
+  type SubmissionFailure,
+  type SubmissionPhase,
+} from '../utils/claimSubmission';
+import {
+  CLAIM_DRAFT_SAVE_DEBOUNCE_MS,
+  clearClaimDraft,
+  isDraftWorthSaving,
+  loadClaimDraft,
+  readStoredDraftOwner,
+  saveClaimDraft,
+} from '../utils/claimDraftStorage';
 import type {
   ClaimantRelationship,
   ClaimCreateInput,
   ClaimEvidenceEntry,
   LossClaim,
-  LossEventType,
+  OwnershipDocumentCategory,
+  OwnershipEvidence,
   ParcelRecord,
+  UploadResult,
 } from '../types';
+
+// Five-step claim wizard (plan B3): Parcel → Your land → Event → Evidence → Review.
+//
+// Submit runs the orchestrator in utils/claimSubmission.ts (create → photos → documents → submit).
+// On success the draft is cleared and `onDone` opens the claim's page; on failure the wizard stays
+// on screen with a focused alert, Retry (finished items are skipped) and, once the claim exists,
+// "Open saved claim". It never navigates away on failure. The draft is kept per user in
+// sessionStorage (utils/claimDraftStorage.ts) so a reload or a trip to the claims list loses only
+// the files, which the farmer is asked to choose again.
 
 export interface ClaimWizardProps {
   parcels: ParcelRecord[];
@@ -42,13 +73,48 @@ export interface ClaimWizardProps {
   onCreateClaim: (input: ClaimCreateInput) => Promise<LossClaim>;
   onUploadEvidence: (claimId: string, file: File) => Promise<ClaimEvidenceEntry>;
   // Moves the draft to `submitted`. Called only after create + evidence so the lifecycle ends in
-  // a state the backend can actually verify; there is no separate "submit" affordance elsewhere.
-  onSubmitClaim: (claimId: string) => Promise<LossClaim>;
+  // a state the backend can actually verify. `requestId` is sent as x-request-id
+  // (fe_<idempotencyKey>_s<attempt>) so a browser attempt can be matched to the backend's jobs.
+  onSubmitClaim: (claimId: string, options?: { requestId?: string }) => Promise<LossClaim>;
+  /** Land document bytes: /upload presign → PUT → complete (api.ts uploadImage). */
+  onUploadDocumentFile?: (file: File) => Promise<UploadResult>;
+  onAttachDocument?: (
+    claimId: string,
+    input: { uploadId: string; documentCategory?: OwnershipDocumentCategory }
+  ) => Promise<OwnershipEvidence>;
+  /** Deletes a photo already stored on the saved claim (DELETE /claims/:id/evidence/:evidenceId). */
+  onDeleteEvidence?: (claimId: string, evidenceId: string) => Promise<unknown>;
   onDone: (claim: LossClaim) => void;
+  /** Opens a claim that was saved but not submitted (offered after a failed submission). */
+  onOpenClaim?: (claimId: string) => void;
   onCancel: () => void;
   onManageFarm?: () => void;
   onAddFirstParcel?: () => void;
+  /** Draft owner (cognitoSub || email). Defaults to the signed-in user in the auth session. */
+  draftOwner?: string | null;
 }
+
+type ShownFailure = SubmissionFailure & { seq: number };
+
+type PendingConfirm = { kind: 'startOver' } | { kind: 'removeUploadedPhoto'; key: string } | null;
+
+const createPreviewUrl = (file: File): string | undefined => {
+  try {
+    return typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function'
+      ? URL.createObjectURL(file)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const revokePreviewUrl = (url: string): void => {
+  try {
+    if (typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(url);
+  } catch {
+    // nothing to release
+  }
+};
 
 export const ClaimWizard = ({
   parcels,
@@ -57,26 +123,109 @@ export const ClaimWizard = ({
   onCreateClaim,
   onUploadEvidence,
   onSubmitClaim,
+  onUploadDocumentFile,
+  onAttachDocument,
+  onDeleteEvidence,
   onDone,
+  onOpenClaim,
   onCancel,
   onManageFarm,
   onAddFirstParcel,
+  draftOwner,
 }: ClaimWizardProps) => {
   const { t, i18n } = useTranslation();
   const language = i18n.language === 'ta' ? 'ta' : 'en';
   const viewport = useClaimsViewport();
 
-  const [draft, dispatch] = useReducer(wizardReducer, undefined, createEmptyDraft);
-  const fileMapRef = useRef<Record<string, File>>({});
-  const [fileInputKey, setFileInputKey] = useState(0);
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  // ── Draft (restored once, on mount) ────────────────────────────────────────────────────
+  const [owner] = useState<string | null>(() =>
+    draftOwner !== undefined ? draftOwner : readStoredDraftOwner()
+  );
+  const [restored] = useState(() => loadClaimDraft(owner));
+  const [draft, dispatch] = useReducer(wizardReducer, restored, (saved) => saved?.draft ?? createEmptyDraft());
+  const [restoreNotice, setRestoreNotice] = useState(() =>
+    restored ? { missingCount: restored.missingCount, dateInvalid: restored.dateInvalid } : null
+  );
+  // Latest draft for code that runs after an await (a render-time `draft` would be stale there).
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
 
-  const stepIndex = CLAIM_WIZARD_STEPS.indexOf(draft.step);
-  const canAdvance = stepCanAdvance(draft);
-  const selectedParcel = parcels.find((p) => p.parcelId === draft.parcelId) ?? null;
+  // ── Files and thumbnails (never part of the draft: a File cannot be stored) ─────────────
+  const filesRef = useRef<Record<string, File>>({});
+  const previewsRef = useRef<Record<string, string>>({});
+  const [, setPreviewVersion] = useState(0);
 
-  // Auto-select single parcel and advance to event step. Only a parcel that actually has a
+  const releasePreview = useCallback((key: string) => {
+    const url = previewsRef.current[key];
+    if (url) {
+      revokePreviewUrl(url);
+      delete previewsRef.current[key];
+    }
+  }, []);
+
+  const stageFile = (key: string, file: File, withPreview: boolean) => {
+    filesRef.current[key] = file;
+    if (withPreview) {
+      releasePreview(key);
+      const url = createPreviewUrl(file);
+      if (url) previewsRef.current[key] = url;
+      setPreviewVersion((v) => v + 1);
+    }
+  };
+
+  const forgetFile = (key: string) => {
+    delete filesRef.current[key];
+    releasePreview(key);
+  };
+
+  const previewUrlFor = (key: string): string | undefined => previewsRef.current[key];
+
+  useEffect(() => {
+    const previews = previewsRef.current; // the same object for the wizard's lifetime
+    return () => {
+      Object.values(previews).forEach(revokePreviewUrl);
+    };
+  }, []);
+
+  // ── Persistence: debounced save, flushed on unmount; never after success or discard ──────
+  const closedRef = useRef(false);
+  useEffect(() => {
+    if (!owner || closedRef.current) return undefined;
+    const timer = setTimeout(() => {
+      if (closedRef.current) return;
+      if (isDraftWorthSaving(draft)) saveClaimDraft(owner, draft);
+      else clearClaimDraft(owner);
+    }, CLAIM_DRAFT_SAVE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [draft, owner]);
+
+  useEffect(() => {
+    const latest = draftRef;
+    const closed = closedRef;
+    return () => {
+      if (!owner || closed.current) return;
+      if (isDraftWorthSaving(latest.current)) saveClaimDraft(owner, latest.current);
+    };
+  }, [owner]);
+
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // ── Focus follows the step: move it to the new step's heading ───────────────────────────
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const shownStepRef = useRef<ClaimWizardStep>(draft.step);
+  useEffect(() => {
+    if (shownStepRef.current === draft.step) return;
+    shownStepRef.current = draft.step;
+    headingRef.current?.focus();
+  }, [draft.step]);
+
+  // Auto-select single parcel and advance to the next step. Only a parcel that actually has a
   // usable boundary is auto-selected, so a lone legacy parcel routes the farmer to draw one
   // instead of silently claiming a missing geometry.
   useEffect(() => {
@@ -89,252 +238,472 @@ export const ClaimWizard = ({
     }
   }, [parcels, parcelsStatus, draft.step, draft.parcelId]);
 
-  const handleEvidenceSelect = async (files: FileList | null) => {
-    if (!files) return;
-    for (const file of Array.from(files)) {
-      if (!canStageEvidence(draft)) {
-        toast.error(t('cropLimit') || t('photoUploadFailed'), { duration: 4000 });
-        break;
-      }
-      try {
-        const { type } = await validateImageFile(file);
-        const key = `ev_${String(Math.random()).slice(2)}_${fileMapRef.current.length ?? 0}`;
-        fileMapRef.current[key] = file;
-        // The SAME key goes into the reducer and the File map — the submit loop looks the file up
-        // by `entry.key`, so a mismatch here silently uploads nothing.
-        dispatch({ type: 'evidence.add', entry: { key, name: file.name, size: file.size, detectedType: type } });
-      } catch (err) {
-        const errorKey = (err as { key?: string })?.key;
-        toast.error(errorKey ? t(errorKey) : t('unsupportedImage'), { duration: 4000 });
-      }
-    }
-    setFileInputKey((k) => k + 1);
-  };
+  // ── Submission state ─────────────────────────────────────────────────────────────────────
+  // The lock is a ref, set synchronously before the first await: a double click (or Enter twice)
+  // lands before React re-renders the disabled button, and must still start only ONE create.
+  const submitLockRef = useRef(false);
+  const submitAttemptsRef = useRef(0);
+  const failureSeqRef = useRef(0);
+  const [submitting, setSubmitting] = useState(false);
+  const [itemBusy, setItemBusy] = useState(false);
+  const [phase, setPhase] = useState<SubmissionPhase | null>(null);
+  const [failure, setFailure] = useState<ShownFailure | null>(null);
+  const [photoMessages, setPhotoMessages] = useState<InlineMessage[]>([]);
+  const [documentMessages, setDocumentMessages] = useState<InlineMessage[]>([]);
+  const [confirm, setConfirm] = useState<PendingConfirm>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
 
-  const removeEvidence = (key: string) => {
-    delete fileMapRef.current[key];
-    dispatch({ type: 'evidence.remove', key });
+  const deps: SubmissionDeps = {
+    createClaim: onCreateClaim,
+    uploadPhoto: onUploadEvidence,
+    uploadDocumentFile: onUploadDocumentFile,
+    attachDocument: onAttachDocument,
+    submitClaim: (claimId, options) => onSubmitClaim(claimId, options),
+  };
+  const getFile = (key: string): File | undefined => filesRef.current[key];
+
+  // A photo/document failure that the farmer has since fixed (retried or removed) no longer needs
+  // the banner; the next Submit re-checks everything anyway.
+  useEffect(() => {
+    if (!failure || submitting || (failure.phase !== 'photos' && failure.phase !== 'documents')) return;
+    const stillFailing =
+      draft.evidence.some((e) => e.status === 'failed') || draft.documents.some((d) => d.status === 'failed');
+    if (!stillFailing) setFailure(null);
+  }, [draft, failure, submitting]);
+
+  const showFailure = (result: SubmissionFailure) => {
+    failureSeqRef.current += 1;
+    setFailure({ ...result, seq: failureSeqRef.current });
   };
 
   const handleSubmit = async () => {
-    if (submitting) return;
-    const summary = buildReviewSummary(draft, parcels);
-    if (!summary.ok) {
-      setSubmitError(summary.reason ? `reviewReason_${summary.reason}` : 'saveFailed');
-      return;
-    }
-    const parcel = parcels.find((p) => p.parcelId === draft.parcelId);
-    if (!parcel || !draft.eventType || !draft.eventDate) return;
-    // The affected area is the farmer's real selection. NEVER substitute the parcel boundary
-    // here: a cleared or never-drawn area must block submission (summary.reason === 'no_geometry')
-    // rather than silently escalating the claim to the whole parcel.
-    if (!draft.geometry) {
-      setSubmitError('reviewReason_no_geometry');
-      return;
-    }
-
-    const input: ClaimCreateInput = {
-      parcelId: parcel.parcelId,
-      eventType: draft.eventType,
-      eventDate: draft.eventDate,
-      geometry: draft.geometry,
-      idempotencyKey:
-        draft.idempotencyKey && isValidIdempotencyKey(draft.idempotencyKey)
-          ? draft.idempotencyKey
-          : generateIdempotencyKey(),
-    };
-    // Optional: only sent when the farmer answered (the backend stores null otherwise).
-    if (draft.claimantRelationship) input.claimantRelationship = draft.claimantRelationship;
-
-    setSubmitting(true);
-    setSubmitError(null);
-
-    // The idempotency key is stable for this wizard session, so a retry after a failed evidence
-    // upload or a failed submit re-attaches to the SAME draft instead of creating a duplicate.
-    let claim: LossClaim;
+    if (submitLockRef.current) return;
+    submitLockRef.current = true;
     try {
-      claim = await onCreateClaim(input);
-    } catch (err) {
-      if (err instanceof ApiClientError && err.status === 401) return; // auth layer owns redirect
-      setSubmitError(err instanceof ApiClientError ? friendlyMessageKey(err.status) : 'saveFailed');
-      setSubmitting(false);
-      return;
-    }
-
-    // Evidence uploads run AFTER the draft exists (evidence is claim-scoped) and BEFORE the
-    // submit, so the claim that enters `submitted` already carries its photos. A failed photo
-    // never blocks the claim: it surfaces in the detail view where the farmer can retry it
-    // (evidence stays mutable in `submitted`), exactly as before.
-    let anyEvidenceFailed = false;
-    for (const entry of draft.evidence) {
-      const file = fileMapRef.current[entry.key];
-      if (!file) continue;
-      // Already stored on a previous attempt — never re-presign, which would duplicate evidence.
-      if (entry.status === 'uploaded') continue;
-      dispatch({ type: 'evidence.uploading', key: entry.key });
-      try {
-        const stored = await onUploadEvidence(claim.id, file);
-        dispatch({ type: 'evidence.uploaded', key: entry.key, uploadId: stored?.uploadId ?? entry.uploadId ?? 'staged' });
-      } catch (err) {
-        if (err instanceof ApiClientError && err.status === 401) return;
-        anyEvidenceFailed = true;
-        const errorKey =
-          err instanceof ApiClientError ? friendlyMessageKey(err.status, 'image') : 'imageUploadFailed';
-        dispatch({ type: 'evidence.failed', key: entry.key, errorKey });
+      const snapshot = draftRef.current;
+      if (!buildReviewSummary(snapshot, parcels).ok) return;
+      setSubmitting(true);
+      setFailure(null);
+      const result = await runClaimSubmission({
+        draft: snapshot,
+        getFile,
+        deps,
+        dispatch,
+        onPhase: (next) => {
+          if (mountedRef.current) setPhase(next);
+        },
+        previousSubmitAttempts: submitAttemptsRef.current,
+      });
+      submitAttemptsRef.current += result.submitAttempts;
+      if (result.ok) {
+        closedRef.current = true;
+        clearClaimDraft(owner);
+        toast.success(t('claimSubmittedToast'), { duration: 3000 });
+        // Left the wizard while it was submitting: the toast says it worked, but do not yank the
+        // farmer back to the claim from wherever they went.
+        if (mountedRef.current) onDone(result.claim);
+        return;
+      }
+      if (mountedRef.current) showFailure(result);
+    } catch {
+      // runClaimSubmission reports failures as results; this only guards a programming error.
+      if (mountedRef.current) {
+        showFailure({
+          ok: false,
+          phase: 'submit',
+          claimId: draftRef.current.claimId,
+          status: -1,
+          errorKey: 'submitError_generic',
+          failedKeys: [],
+          submitAttempts: 0,
+        });
+      }
+    } finally {
+      submitLockRef.current = false;
+      if (mountedRef.current) {
+        setSubmitting(false);
+        setPhase(null);
       }
     }
-
-    // Create → evidence → submit. Without this the claim silently stays `draft`, is never
-    // verifiable (the backend rejects verify for non-submitted claims), and the farmer sees a
-    // "submitted" toast over a claim that was never submitted.
-    let submitted: LossClaim;
-    try {
-      submitted = await onSubmitClaim(claim.id);
-    } catch (err) {
-      if (err instanceof ApiClientError && err.status === 401) return;
-      const errorKey =
-        err instanceof ApiClientError ? friendlyMessageKey(err.status) : 'claimSubmitFailed';
-      setSubmitError(errorKey);
-      setSubmitting(false);
-      // The draft exists and can still be submitted — hand the farmer the detail view, which
-      // offers the submit action for a `draft` claim, instead of stranding them on the wizard.
-      onDone(claim);
-      return;
-    }
-
-    setSubmitting(false);
-    if (anyEvidenceFailed) {
-      toast.warning(t('claimSubmittedSomePhotosFailed'), { duration: 5000 });
-    } else {
-      toast.success(t('claimSubmittedToast'), { duration: 3000 });
-    }
-    onDone(submitted);
   };
 
+  // Per-item Retry on the Evidence step (only once the claim exists). Shares the submit lock.
+  const handleRetryItem = async (kind: 'photo' | 'document', key: string) => {
+    if (submitLockRef.current || !draftRef.current.claimId) return;
+    submitLockRef.current = true;
+    setItemBusy(true);
+    try {
+      await retrySubmissionItem({ draft: draftRef.current, getFile, deps, dispatch, kind, key });
+    } finally {
+      submitLockRef.current = false;
+      if (mountedRef.current) setItemBusy(false);
+    }
+  };
+
+  // ── Staging files ───────────────────────────────────────────────────────────────────────
+  const validateFiles = async (files: File[]) => {
+    const accepted: { file: File; type: StagedImageType }[] = [];
+    const rejected: InlineMessage[] = [];
+    for (const file of files) {
+      try {
+        const { type } = await validateImageFile(file);
+        accepted.push({ file, type });
+      } catch (err) {
+        rejected.push({ key: 'wizardFileRejected', name: file.name, reasonKey: (err as { key?: string })?.key ?? 'unsupportedImage' });
+      }
+    }
+    return { accepted, rejected };
+  };
+
+  const handleAddPhotos = async (files: File[]) => {
+    if (files.length === 0) return;
+    const { accepted, rejected } = await validateFiles(files);
+    // Count against the CURRENT draft, read after the awaits. The old check used the render-time
+    // draft, so a whole batch slipped past the limit.
+    const slots = Math.max(0, CLAIM_EVIDENCE_MAX - draftRef.current.evidence.length);
+    accepted.slice(0, slots).forEach(({ file, type }) => {
+      const key = newStagedKey('photo');
+      stageFile(key, file, true);
+      dispatch({ type: 'evidence.add', entry: { key, name: file.name, size: file.size, detectedType: type } });
+    });
+    const messages = [...rejected];
+    if (accepted.length > slots) messages.push({ key: 'wizardPhotoLimitSkipped', max: CLAIM_EVIDENCE_MAX });
+    setPhotoMessages(messages);
+  };
+
+  const handleReplacePhoto = async (key: string, file: File) => {
+    const { accepted, rejected } = await validateFiles([file]);
+    setPhotoMessages(rejected);
+    if (accepted.length === 0) return;
+    stageFile(key, accepted[0].file, true);
+    dispatch({ type: 'evidence.relink', key, name: file.name, size: file.size, detectedType: accepted[0].type });
+  };
+
+  const handleRemovePhoto = (key: string) => {
+    const current = draftRef.current;
+    const entry = current.evidence.find((e) => e.key === key);
+    if (!entry) return;
+    // Already stored on the saved claim: removing it is a real delete, so ask first.
+    if (entry.status === 'uploaded' && current.claimId) {
+      setConfirm({ kind: 'removeUploadedPhoto', key });
+      return;
+    }
+    forgetFile(key);
+    dispatch({ type: 'evidence.remove', key });
+  };
+
+  const removeUploadedPhoto = async (key: string) => {
+    if (submitLockRef.current) return;
+    const { claimId, evidence } = draftRef.current;
+    const entry = evidence.find((e) => e.key === key);
+    if (!claimId || !entry?.uploadId || !onDeleteEvidence) {
+      setConfirm(null);
+      setPhotoMessages([{ key: 'wizardRemoveFailed', name: entry?.name }]);
+      return;
+    }
+    submitLockRef.current = true;
+    setConfirmBusy(true);
+    try {
+      await onDeleteEvidence(claimId, entry.uploadId);
+      forgetFile(key);
+      dispatch({ type: 'evidence.remove', key });
+      setPhotoMessages([]);
+    } catch (err) {
+      if (errorStatus(err) !== 401) setPhotoMessages([{ key: 'wizardRemoveFailed', name: entry.name }]);
+    } finally {
+      submitLockRef.current = false;
+      if (mountedRef.current) {
+        setConfirmBusy(false);
+        setConfirm(null);
+      }
+    }
+  };
+
+  const handleAddDocuments = async (files: File[]) => {
+    if (files.length === 0) return;
+    const { accepted, rejected } = await validateFiles(files);
+    // A PDF (or anything that is not an image) gets the documents-specific "images only" reason.
+    const messages: InlineMessage[] = rejected.map((m) =>
+      m.reasonKey === 'unsupportedImage' ? { ...m, reasonKey: 'ownershipImagesOnly' } : m
+    );
+    const current = draftRef.current;
+    const slots = Math.max(0, CLAIM_DOCUMENT_MAX - current.documents.length);
+    let staged: StagedDocument[] = current.documents;
+    accepted.slice(0, slots).forEach(({ file, type }) => {
+      const key = newStagedKey('document');
+      // Each new document defaults to the first group the relationship still needs.
+      const category = defaultDocumentCategory(current.claimantRelationship, staged);
+      const entry = { key, name: file.name, size: file.size, detectedType: type, category };
+      staged = [...staged, { ...entry, status: 'staged' }];
+      stageFile(key, file, false);
+      dispatch({ type: 'document.add', entry });
+    });
+    if (accepted.length > slots) messages.push({ key: 'wizardDocumentLimitSkipped', max: CLAIM_DOCUMENT_MAX });
+    setDocumentMessages(messages);
+  };
+
+  const handleReplaceDocument = async (key: string, file: File) => {
+    const { accepted, rejected } = await validateFiles([file]);
+    setDocumentMessages(
+      rejected.map((m) => (m.reasonKey === 'unsupportedImage' ? { ...m, reasonKey: 'ownershipImagesOnly' } : m))
+    );
+    if (accepted.length === 0) return;
+    stageFile(key, accepted[0].file, false);
+    dispatch({ type: 'document.relink', key, name: file.name, size: file.size, detectedType: accepted[0].type });
+  };
+
+  const handleRemoveDocument = (key: string) => {
+    const doc = draftRef.current.documents.find((d) => d.key === key);
+    if (!doc || doc.status === 'attached' || doc.status === 'attaching') return;
+    forgetFile(key);
+    dispatch({ type: 'document.remove', key });
+  };
+
+  // ── Leaving / starting over ─────────────────────────────────────────────────────────────
+  const startOver = () => {
+    clearClaimDraft(owner);
+    Object.keys(filesRef.current).forEach(forgetFile);
+    submitAttemptsRef.current = 0;
+    dispatch({ type: 'reset' });
+    setRestoreNotice(null);
+    setFailure(null);
+    setPhotoMessages([]);
+    setDocumentMessages([]);
+    setConfirm(null);
+  };
+
+  const openSavedClaim = () => {
+    const { claimId } = draftRef.current;
+    if (!claimId || !onOpenClaim) return;
+    // The claim lives on the server now and its page offers Submit for a draft; files left here
+    // could not survive the navigation anyway.
+    closedRef.current = true;
+    clearClaimDraft(owner);
+    onOpenClaim(claimId);
+  };
+
+  // ── Render ──────────────────────────────────────────────────────────────────────────────
+  const stepIndex = CLAIM_WIZARD_STEPS.indexOf(draft.step);
+  const canAdvance = stepCanAdvance(draft);
+  const selectedParcel = parcels.find((p) => p.parcelId === draft.parcelId) ?? null;
+  const summary = buildReviewSummary(draft, parcels);
+  const locked = draft.claimId !== null;
+  const busy = submitting || itemBusy || confirmBusy;
+
   return (
-    <div className="mx-auto w-full max-w-2xl px-3 pb-8 sm:px-4">
+    <div className="mx-auto w-full max-w-2xl px-3 sm:px-4" data-testid="claim-wizard" data-step={draft.step}>
       {/* Header */}
       <div className="mb-3 flex items-center gap-3">
-        <button
-          onClick={onCancel}
-          aria-label={t('backToClaims')}
-          className="rounded-xl border border-gray-300 p-2 text-gray-700 hover:bg-gray-50"
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </button>
+        <Button variant="secondary" size="icon" onClick={onCancel} aria-label={t('backToClaims')} disabled={submitting}>
+          <ArrowLeft aria-hidden="true" className="h-4 w-4" />
+        </Button>
         <div className="min-w-0">
-          <h2 className="truncate text-lg font-bold text-gray-900 sm:text-xl">{t('claimWizardTitle')}</h2>
-          <p className="text-xs text-gray-500">
-            {viewport.stepIndicator === 'count'
-              ? t('stepXOfY', { current: stepIndex + 1, total: CLAIM_WIZARD_STEPS.length })
-              : t(`step${stepTitleKey(draft.step)}`)}
+          <h2 className="truncate text-lg font-bold text-ink sm:text-xl">{t('claimWizardTitle')}</h2>
+          <p className="text-xs text-ink-muted">
+            {t('stepXOfY', { current: stepIndex + 1, total: CLAIM_WIZARD_STEPS.length })}
+            {viewport.stepIndicator === 'count' && ` · ${t(stepLabelKey(draft.step))}`}
           </p>
         </div>
       </div>
 
       {/* Step rail (only when it fits — compact screens get the counter above) */}
       {viewport.stepIndicator === 'rail' && (
-        <ol className="mb-4 flex items-center gap-1 overflow-x-auto pb-1">
-          {CLAIM_WIZARD_STEPS.map((step, index) => (
-            <li key={step} className="flex items-center gap-1">
-              <span
-                className={`whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${
-                  index < stepIndex
-                    ? 'bg-emerald-100 text-emerald-800'
-                    : index === stepIndex
-                      ? 'bg-emerald-600 text-white'
-                      : 'bg-gray-100 text-gray-500'
-                }`}
-              >
-                {t(stepLabelKey(step))}
-              </span>
-              {index < CLAIM_WIZARD_STEPS.length - 1 && <span className="h-px w-3 bg-gray-300" />}
-            </li>
-          ))}
-        </ol>
+        <Stepper
+          orientation="horizontal"
+          aria-label={t('wizardStepsLabel')}
+          className="mb-4"
+          items={CLAIM_WIZARD_STEPS.map((step, index) => ({
+            id: step,
+            label: t(stepLabelKey(step)),
+            status: index < stepIndex ? 'complete' : index === stepIndex ? 'current' : 'upcoming',
+          }))}
+        />
       )}
 
-      <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:p-5">
-        {draft.step === 'parcel' && <ParcelStep parcels={parcels} parcelsStatus={parcelsStatus} onRetry={onRetryParcels} selectedParcelId={draft.parcelId} onSelect={(p) => dispatch({ type: 'select.parcel', parcelId: p.parcelId, geometry: p.geometry })} onManageFarm={onManageFarm} onAddFirstParcel={onAddFirstParcel} />}
+      {restoreNotice && (
+        <Alert
+          tone="info"
+          className="mb-3"
+          data-testid="wizard-draft-restored"
+          title={t('wizardDraftRestoredTitle')}
+          actions={
+            <Button
+              size="sm"
+              variant="secondary"
+              leadingIcon={<RotateCcw className="h-3.5 w-3.5" />}
+              onClick={() => setConfirm({ kind: 'startOver' })}
+              disabled={busy}
+            >
+              {t('wizardStartOver')}
+            </Button>
+          }
+        >
+          <p>{t('wizardDraftRestoredBody')}</p>
+          {restoreNotice.missingCount > 0 && <p className="mt-1">{t('wizardDraftRestoredMissing')}</p>}
+          {restoreNotice.dateInvalid && <p className="mt-1">{t('wizardDraftRestoredDate')}</p>}
+        </Alert>
+      )}
+
+      <div className="rounded-card border border-surface-border bg-white p-4 shadow-card sm:p-5">
+        {draft.step === 'parcel' && (
+          <ParcelStep
+            parcels={parcels}
+            parcelsStatus={parcelsStatus}
+            onRetry={onRetryParcels}
+            selectedParcelId={draft.parcelId}
+            locked={locked}
+            headingRef={headingRef}
+            onSelect={(p) => dispatch({ type: 'select.parcel', parcelId: p.parcelId, geometry: p.geometry })}
+            onManageFarm={onManageFarm}
+            onAddFirstParcel={onAddFirstParcel}
+          />
+        )}
         {draft.step === 'relationship' && (
           <RelationshipStep
             selected={draft.claimantRelationship}
+            locked={locked}
+            headingRef={headingRef}
             onSelect={(relationship) => dispatch({ type: 'select.relationship', relationship })}
           />
         )}
-        {draft.step === 'event' && <EventStep selected={draft.eventType} onSelect={(eventType) => dispatch({ type: 'select.event', eventType })} />}
-        {draft.step === 'date' && <DateStep value={draft.eventDate} onChange={(eventDate) => dispatch({ type: 'select.date', eventDate })} />}
-        {draft.step === 'area' && <AreaStep parcel={selectedParcel} geometry={draft.geometry} onSelect={(geometry) => dispatch({ type: 'select.area', geometry })} />}
+        {draft.step === 'event' && (
+          <EventStep
+            parcel={selectedParcel}
+            eventType={draft.eventType}
+            eventDate={draft.eventDate}
+            geometry={draft.geometry}
+            missing={eventStepMissing(draft)}
+            locked={locked}
+            headingRef={headingRef}
+            onSelectEvent={(eventType) => dispatch({ type: 'select.event', eventType })}
+            onSelectDate={(eventDate) => dispatch({ type: 'select.date', eventDate })}
+            onSelectArea={(geometry) => dispatch({ type: 'select.area', geometry })}
+          />
+        )}
         {draft.step === 'evidence' && (
           <EvidenceStep
             evidence={draft.evidence}
-            fileInputKey={fileInputKey}
-            onSelectFiles={(files) => void handleEvidenceSelect(files)}
-            onRemove={removeEvidence}
+            documents={draft.documents}
+            relationship={draft.claimantRelationship}
+            claimSaved={locked}
+            busy={busy}
+            missing={evidenceStepMissing(draft)}
+            photoMessages={photoMessages}
+            documentMessages={documentMessages}
+            previewUrlFor={previewUrlFor}
+            headingRef={headingRef}
+            onAddPhotos={(files) => void handleAddPhotos(files)}
+            onRemovePhoto={handleRemovePhoto}
+            onRetryPhoto={(key) => void handleRetryItem('photo', key)}
+            onReplacePhoto={(key, file) => void handleReplacePhoto(key, file)}
+            onAddDocuments={(files) => void handleAddDocuments(files)}
+            onRemoveDocument={handleRemoveDocument}
+            onRetryDocument={(key) => void handleRetryItem('document', key)}
+            onReplaceDocument={(key, file) => void handleReplaceDocument(key, file)}
+            onDocumentCategory={(key, category) => dispatch({ type: 'document.category', key, category })}
           />
         )}
-        {draft.step === 'review' && <ReviewStep draft={draft} parcels={parcels} language={language} />}
-      </div>
-
-      {submitError && (
-        <div role="alert" className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {t(submitError)}
-        </div>
-      )}
-
-      {/* Footer navigation */}
-      <div className="mt-4 flex items-center justify-between gap-3">
-        <button
-          onClick={() => dispatch({ type: 'back' })}
-          disabled={stepIndex === 0 || submitting}
-          className="rounded-xl border border-gray-300 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-        >
-          {t('backStep')}
-        </button>
-        {draft.step === 'review' ? (
-          <button
-            onClick={() => void handleSubmit()}
-            disabled={!canAdvance || submitting}
-            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-green-700 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:from-emerald-700 hover:to-green-800 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-            {submitting ? t('submittingClaim') : t('submitClaim')}
-          </button>
-        ) : (
-          <button
-            onClick={() => dispatch({ type: 'next' })}
-            disabled={!canAdvance}
-            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-green-700 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:from-emerald-700 hover:to-green-800 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {t('continueStep')}
-            <ArrowRight className="h-4 w-4" />
-          </button>
+        {draft.step === 'review' && (
+          <ReviewStep
+            summary={summary}
+            language={language}
+            locked={locked}
+            canEdit={(step) => !busy && canGotoStep(draft, step)}
+            onEdit={(step) => dispatch({ type: 'goto', step })}
+            previewUrlFor={previewUrlFor}
+            headingRef={headingRef}
+          />
         )}
       </div>
+
+      {submitting && phase && (
+        <SubmissionStatus phase={phase} evidence={draft.evidence} documents={draft.documents} />
+      )}
+
+      {failure && !submitting && (
+        <Alert
+          key={failure.seq}
+          tone="danger"
+          focusOnMount
+          className="mt-3"
+          data-testid="wizard-submit-error"
+          title={t(`submitErrorTitle_${failure.phase}`)}
+          actions={
+            <>
+              <Button
+                size="sm"
+                leadingIcon={<RotateCcw className="h-3.5 w-3.5" />}
+                onClick={() => void handleSubmit()}
+                disabled={busy || !summary.ok}
+              >
+                {t('retry')}
+              </Button>
+              {draft.claimId && onOpenClaim && (
+                <Button size="sm" variant="secondary" onClick={openSavedClaim} disabled={busy}>
+                  {t('wizardOpenSavedClaim')}
+                </Button>
+              )}
+            </>
+          }
+        >
+          {t(failure.errorKey)}
+        </Alert>
+      )}
+
+      {/* Footer navigation: pinned to the bottom of the screen on phones, inline from sm up. */}
+      <div
+        data-testid="wizard-footer"
+        className="sticky bottom-0 z-10 -mx-3 mt-4 flex items-center justify-between gap-3 border-t border-surface-border bg-white/95 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:px-0 sm:pb-8 sm:pt-0 sm:backdrop-blur-none"
+      >
+        <Button variant="secondary" onClick={() => dispatch({ type: 'back' })} disabled={stepIndex === 0 || busy}>
+          {t('backStep')}
+        </Button>
+        {draft.step === 'review' ? (
+          <Button
+            onClick={() => void handleSubmit()}
+            disabled={!summary.ok}
+            loading={submitting}
+            leadingIcon={<Check className="h-4 w-4" />}
+          >
+            {submitting ? t('submittingClaim') : t('submitClaim')}
+          </Button>
+        ) : (
+          <Button onClick={() => dispatch({ type: 'next' })} disabled={!canAdvance || busy}>
+            {t('continueStep')}
+            <ArrowRight aria-hidden="true" className="h-4 w-4" />
+          </Button>
+        )}
+      </div>
+
+      <ConfirmDialog
+        open={confirm?.kind === 'startOver'}
+        tone="danger"
+        title={t('wizardStartOverTitle')}
+        body={
+          <>
+            <p>{t('wizardStartOverBody')}</p>
+            {draft.claimId && <p className="mt-1">{t('wizardStartOverSavedNote')}</p>}
+          </>
+        }
+        confirmLabel={t('wizardStartOverConfirm')}
+        onConfirm={startOver}
+        onCancel={() => setConfirm(null)}
+      />
+      <ConfirmDialog
+        open={confirm?.kind === 'removeUploadedPhoto'}
+        tone="danger"
+        busy={confirmBusy}
+        title={t('wizardRemoveUploadedTitle')}
+        body={t('wizardRemoveUploadedBody')}
+        confirmLabel={t('evidenceDelete')}
+        onConfirm={() => {
+          if (confirm?.kind === 'removeUploadedPhoto') void removeUploadedPhoto(confirm.key);
+        }}
+        onCancel={() => setConfirm(null)}
+      />
     </div>
   );
 };
-
-function stepTitleKey(step: ClaimWizardStep): string {
-  switch (step) {
-    case 'parcel':
-      return 'Parcel';
-    case 'relationship':
-      return 'Relationship';
-    case 'event':
-      return 'Event';
-    case 'date':
-      return 'Date';
-    case 'area':
-      return 'Area';
-    case 'evidence':
-      return 'Evidence';
-    case 'review':
-      return 'Review';
-    default:
-      return 'Parcel';
-  }
-}
 
 function stepLabelKey(step: ClaimWizardStep): string {
   switch (step) {
@@ -344,10 +713,6 @@ function stepLabelKey(step: ClaimWizardStep): string {
       return 'stepRelationship';
     case 'event':
       return 'stepEvent';
-    case 'date':
-      return 'stepDate';
-    case 'area':
-      return 'stepArea';
     case 'evidence':
       return 'stepEvidence';
     case 'review':
@@ -364,6 +729,8 @@ const ParcelStep = ({
   parcelsStatus,
   onRetry,
   selectedParcelId,
+  locked,
+  headingRef,
   onSelect,
   onManageFarm,
   onAddFirstParcel,
@@ -372,6 +739,8 @@ const ParcelStep = ({
   parcelsStatus: 'loading' | 'ready' | 'error';
   onRetry: () => void;
   selectedParcelId: string | null;
+  locked: boolean;
+  headingRef: Ref<HTMLHeadingElement>;
   onSelect: (parcel: ParcelRecord) => void;
   onManageFarm?: () => void;
   onAddFirstParcel?: () => void;
@@ -381,8 +750,8 @@ const ParcelStep = ({
   const claimableParcels = parcels.filter(hasUsableGeometry);
   if (parcelsStatus === 'loading') {
     return (
-      <div className="flex flex-col items-center gap-2 py-8 text-gray-500">
-        <Loader2 className="h-8 w-8 animate-spin text-emerald-600" />
+      <div className="flex flex-col items-center gap-2 py-8 text-ink-muted" aria-busy="true">
+        <Loader2 aria-hidden="true" className="h-8 w-8 animate-spin text-brand-700" />
         <p className="text-sm">{t('loading')}</p>
       </div>
     );
@@ -390,34 +759,28 @@ const ParcelStep = ({
   if (parcelsStatus === 'error') {
     return (
       <div className="flex flex-col items-center gap-3 py-8 text-center">
-        <p className="text-sm text-red-700">{t('claimsLoadFailed')}</p>
-        <button onClick={onRetry} className="rounded-full border border-gray-300 px-4 py-1.5 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+        <p className="text-sm text-danger-fg">{t('claimsLoadFailed')}</p>
+        <Button variant="secondary" size="sm" onClick={onRetry}>
           {t('retry')}
-        </button>
+        </Button>
       </div>
     );
   }
   if (parcels.length === 0) {
     return (
       <div className="flex flex-col items-center gap-4 py-8 text-center">
-        <MapPinned className="h-12 w-12 text-emerald-600" />
-        <h3 className="text-lg font-bold text-gray-900">{t('noParcelsTitle')}</h3>
-        <p className="max-w-sm text-sm text-gray-600">{t('noParcelsBody')}</p>
-        <div className="flex flex-col sm:flex-row gap-3 w-full max-w-sm">
-          <button
-            onClick={onManageFarm}
-            className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500 bg-white px-4 py-2.5 text-sm font-semibold text-emerald-700 hover:bg-emerald-50"
-          >
-            <Map className="h-4 w-4" />
+        <MapPinned aria-hidden="true" className="h-12 w-12 text-brand-700" />
+        <h3 ref={headingRef} tabIndex={-1} className="text-lg font-bold text-ink outline-none">
+          {t('noParcelsTitle')}
+        </h3>
+        <p className="max-w-sm text-sm text-ink-muted">{t('noParcelsBody')}</p>
+        <div className="flex w-full max-w-sm flex-col gap-3 sm:flex-row">
+          <Button variant="secondary" className="flex-1" leadingIcon={<MapIcon className="h-4 w-4" />} onClick={onManageFarm}>
             {t('manageFarmCta')}
-          </button>
-          <button
-            onClick={onAddFirstParcel}
-            className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-green-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:from-emerald-700 hover:to-green-800"
-          >
-            <Plus className="h-4 w-4" />
+          </Button>
+          <Button className="flex-1" leadingIcon={<Plus className="h-4 w-4" />} onClick={onAddFirstParcel}>
             {t('addFirstParcelCta')}
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -427,21 +790,24 @@ const ParcelStep = ({
   if (claimableParcels.length === 0) {
     return (
       <div className="flex flex-col items-center gap-4 py-8 text-center">
-        <MapPinned className="h-12 w-12 text-amber-500" />
-        <h3 className="text-lg font-bold text-gray-900">{t('noClaimableParcelsTitle')}</h3>
-        <p className="max-w-sm text-sm text-gray-600">{t('noClaimableParcelsBody')}</p>
-        <button
-          onClick={onManageFarm}
-          className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-green-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:from-emerald-700 hover:to-green-800"
-        >
-          <Map className="h-4 w-4" />
+        <MapPinned aria-hidden="true" className="h-12 w-12 text-warning-solid" />
+        <h3 ref={headingRef} tabIndex={-1} className="text-lg font-bold text-ink outline-none">
+          {t('noClaimableParcelsTitle')}
+        </h3>
+        <p className="max-w-sm text-sm text-ink-muted">{t('noClaimableParcelsBody')}</p>
+        <Button leadingIcon={<MapIcon className="h-4 w-4" />} onClick={onManageFarm}>
           {t('manageFarmCta')}
-        </button>
+        </Button>
       </div>
     );
   }
   return (
-    <StepShell title={t('selectParcel')}>
+    <StepShell title={t('selectParcel')} headingRef={headingRef}>
+      {locked && (
+        <Alert tone="info" className="mb-3">
+          {t('wizardLockedNote')}
+        </Alert>
+      )}
       <ul className="space-y-2">
         {parcels.map((parcel) => {
           const active = parcel.parcelId === selectedParcelId;
@@ -449,29 +815,31 @@ const ParcelStep = ({
           return (
             <li key={parcel.parcelId}>
               <button
+                type="button"
                 onClick={() => usable && onSelect(parcel)}
-                disabled={!usable}
+                disabled={!usable || locked}
                 aria-pressed={active}
-                aria-disabled={!usable}
-                className={`w-full rounded-xl border p-3 text-left transition ${
+                aria-disabled={!usable || locked}
+                className={cn(
+                  'w-full rounded-control border p-3 text-left transition',
                   !usable
-                    ? 'cursor-not-allowed border-amber-200 bg-amber-50 opacity-80'
+                    ? 'cursor-not-allowed border-warning-border bg-warning-bg opacity-80'
                     : active
-                      ? 'border-emerald-500 bg-emerald-50 ring-2 ring-emerald-100'
-                      : 'border-gray-200 bg-white hover:border-emerald-300'
-                }`}
+                      ? 'border-brand-600 bg-brand-50 ring-2 ring-brand-100'
+                      : 'border-surface-border bg-white hover:border-brand-300 disabled:cursor-not-allowed disabled:opacity-60'
+                )}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate font-semibold text-gray-900">
+                  <span className="truncate font-semibold text-ink">
                     {parcel.name || t('parcelNameLabel')}
                   </span>
-                  <span className="whitespace-nowrap text-xs text-gray-500">
+                  <span className="whitespace-nowrap text-xs text-ink-muted">
                     {t('parcelAreaAcresLabel', { acres: parcel.calculatedAreaAcres })}
                   </span>
                 </div>
-                {parcel.crop && <div className="mt-0.5 text-xs text-gray-500">{parcel.crop}</div>}
+                {parcel.crop && <div className="mt-0.5 text-xs text-ink-muted">{parcel.crop}</div>}
                 {!usable && (
-                  <div className="mt-1 text-xs text-amber-800">{t('parcelBoundaryMissingHint')}</div>
+                  <div className="mt-1 text-xs text-warning-fg">{t('parcelBoundaryMissingHint')}</div>
                 )}
               </button>
             </li>
@@ -488,343 +856,50 @@ const ParcelStep = ({
 
 const RelationshipStep = ({
   selected,
+  locked,
+  headingRef,
   onSelect,
 }: {
   selected: ClaimantRelationship | null;
+  locked: boolean;
+  headingRef: Ref<HTMLHeadingElement>;
   onSelect: (relationship: ClaimantRelationship | null) => void;
 }) => {
   const { t } = useTranslation();
   return (
-    <StepShell title={t('selectRelationship')}>
-      <p className="mb-3 text-xs text-gray-500">{t('relationshipStepHint')}</p>
+    <StepShell title={t('selectRelationship')} headingRef={headingRef}>
+      {locked && (
+        <Alert tone="info" className="mb-3">
+          {t('wizardLockedNote')}
+        </Alert>
+      )}
+      <p className="mb-3 text-xs text-ink-muted">{t('relationshipStepHint')}</p>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" role="group" aria-label={t('selectRelationship')}>
         {CLAIMANT_RELATIONSHIPS.map((relationship) => {
           const active = selected === relationship;
           return (
             <button
               key={relationship}
+              type="button"
               // Tapping the selected answer again clears it (the question is optional).
               onClick={() => onSelect(active ? null : relationship)}
               aria-pressed={active}
-              className={`rounded-xl border px-3 py-2.5 text-left text-sm font-semibold transition ${
+              disabled={locked}
+              className={cn(
+                'min-h-11 rounded-control border px-3 py-2.5 text-left text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60',
                 active
-                  ? 'border-emerald-500 bg-emerald-50 text-emerald-900 ring-2 ring-emerald-100'
-                  : 'border-gray-200 bg-white text-gray-700 hover:border-emerald-300'
-              }`}
+                  ? 'border-brand-600 bg-brand-50 text-brand-900 ring-2 ring-brand-100'
+                  : 'border-surface-border bg-white text-ink-muted hover:border-brand-300'
+              )}
             >
               {t(claimantRelationshipLabelKey(relationship))}
             </button>
           );
         })}
       </div>
-      <p className="mt-3 text-xs text-gray-500">{t('relationshipOptionalNote')}</p>
+      <p className="mt-3 text-xs text-ink-muted">{t('relationshipOptionalNote')}</p>
     </StepShell>
   );
 };
-
-// ── Step: Event ─────────────────────────────────────────────────────────────────────────
-
-const EventStep = ({
-  selected,
-  onSelect,
-}: {
-  selected: string | null;
-  onSelect: (eventType: LossEventType) => void;
-}) => {
-  const { t } = useTranslation();
-  return (
-    <StepShell title={t('selectEvent')}>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        {CLAIM_EVENT_TYPES.map((eventType) => {
-          const active = selected === eventType;
-          return (
-            <button
-              key={eventType}
-              onClick={() => onSelect(eventType)}
-              aria-pressed={active}
-              className={`rounded-xl border px-3 py-2.5 text-sm font-semibold transition ${
-                active
-                  ? 'border-emerald-500 bg-emerald-50 text-emerald-900 ring-2 ring-emerald-100'
-                  : 'border-gray-200 bg-white text-gray-700 hover:border-emerald-300'
-              }`}
-            >
-              {t(claimEventLabelKey(eventType))}
-            </button>
-          );
-        })}
-      </div>
-    </StepShell>
-  );
-};
-
-// ── Step: Date ──────────────────────────────────────────────────────────────────────────
-
-const DateStep = ({
-  value,
-  onChange,
-}: {
-  value: string | null;
-  onChange: (value: string) => void;
-}) => {
-  const { t } = useTranslation();
-  const maxDate = new Date().toISOString().slice(0, 10);
-  const check = validateClaimDate(value);
-  return (
-    <StepShell title={t('selectDate')}>
-      <input
-        type="date"
-        value={value ?? ''}
-        max={maxDate}
-        onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-xl border border-gray-200 p-3 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
-      />
-      <p className="mt-2 text-xs text-gray-500">{t('dateHint')}</p>
-      {value && !check.ok && (
-        <p role="alert" className="mt-2 text-sm text-red-600">
-          {check.reason === 'future' ? t('dateInvalidFuture') : t('dateInvalidWindow')}
-        </p>
-      )}
-    </StepShell>
-  );
-};
-
-// ── Step: Affected area ───────────────────────────────────────────────────────────────
-// The affected area is a SEPARATE geometry from the parcel boundary: the parcel footprint is
-// stored on the FarmProfile, while this polygon only ever lives on the claim draft and is
-// submitted as the claim's `geometry`. The backend computes `claimedAreaAcres` from it and
-// the Phase 9 spatial engine decides containment/overlap — the map preview is advisory only.
-
-const AreaStep = ({
-  parcel,
-  geometry,
-  onSelect,
-}: {
-  parcel: ParcelRecord | null;
-  geometry: unknown;
-  onSelect: (geometry: ParcelRecord['geometry'] | null) => void;
-}) => {
-  const { t } = useTranslation();
-  const [draftGeometry, setDraftGeometry] = useState<ParcelRecord['geometry'] | null>(null);
-
-  if (!parcel) {
-    return <StepShell title={t('selectArea')}><p className="text-sm text-gray-600">{t('reviewReason_no_parcel')}</p></StepShell>;
-  }
-
-  const wholeParcelSelected =
-    geometry != null &&
-    JSON.stringify(geometry) === JSON.stringify(parcel.geometry);
-
-  return (
-    <StepShell title={t('selectArea')}>
-      <button
-        onClick={() => {
-          setDraftGeometry(null);
-          onSelect(parcel.geometry);
-        }}
-        aria-pressed={wholeParcelSelected}
-        className={`mb-3 w-full rounded-xl border p-4 text-left transition ${
-          wholeParcelSelected ? 'border-emerald-500 bg-emerald-50 ring-2 ring-emerald-100' : 'border-gray-200 bg-white hover:border-emerald-300'
-        }`}
-      >
-        <div className="flex items-center justify-between gap-2">
-          <span className="font-semibold text-gray-900">
-            {t('areaEntireParcel', { acres: parcel.calculatedAreaAcres })}
-          </span>
-          {wholeParcelSelected && <Check className="h-5 w-5 text-emerald-600" />}
-        </div>
-        <p className="mt-1 text-xs text-gray-500">{t('areaEntireParcelDesc')}</p>
-      </button>
-
-      <p className="mb-2 text-sm font-semibold text-gray-700">{t('areaDrawPrompt')}</p>
-      <LazyParcelDrawMap
-        value={draftGeometry}
-        label={t('areaDrawPrompt')}
-        compact
-        contextPolygon={parcel.geometry}
-        contextIsContainer
-        footerNote={t('areaServerAuthority')}
-        onChange={(polygon) => {
-          setDraftGeometry(polygon);
-          // Clearing the drawing clears the claim's affected area. Falling back to the parcel
-          // boundary here would turn a partial claim into a full-parcel claim without the farmer
-          // ever asking for it — the single worst outcome of this step.
-          onSelect(polygon);
-        }}
-      />
-      {geometry != null && !wholeParcelSelected && (
-        <p className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
-          {t('areaAffectedDrawn')}
-        </p>
-      )}
-    </StepShell>
-  );
-};
-
-// ── Step: Evidence (staged client-side; uploaded after the claim is created) ────────────
-
-const EvidenceStep = ({
-  evidence,
-  fileInputKey,
-  onSelectFiles,
-  onRemove,
-}: {
-  evidence: StagedEvidence[];
-  fileInputKey: number;
-  onSelectFiles: (files: FileList | null) => void;
-  onRemove: (key: string) => void;
-}) => {
-  const { t } = useTranslation();
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  return (
-    <StepShell title={t('selectEvidence')}>
-      <p className="mb-3 text-xs text-gray-500">{t('evidenceStepHint', { max: 10 })}</p>
-      <input
-        key={fileInputKey}
-        ref={inputRef}
-        type="file"
-        accept="image/*"
-        multiple
-        className="hidden"
-        onChange={(event) => onSelectFiles(event.target.files)}
-      />
-      <button
-        onClick={() => inputRef.current?.click()}
-        className="inline-flex items-center gap-1.5 rounded-xl border border-dashed border-emerald-400 px-4 py-2.5 text-sm font-semibold text-emerald-700 hover:bg-emerald-50"
-      >
-        <Plus className="h-4 w-4" />
-        {t('addPhoto')}
-      </button>
-      {evidence.length === 0 ? (
-        <p className="mt-3 text-sm text-gray-500">{t('noEvidenceText')}</p>
-      ) : (
-        <ul className="mt-3 space-y-2">
-          {evidence.map((entry) => (
-            <li key={entry.key} className="flex items-center justify-between gap-2 rounded-xl border border-gray-200 px-3 py-2">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium text-gray-800">{t('photoAdded', { name: entry.name })}</div>
-                <div className="text-xs text-gray-500">
-                  {entry.status === 'uploaded'
-                    ? t('evidenceStatus_stored')
-                    : entry.status === 'failed'
-                      ? entry.errorKey
-                        ? t(entry.errorKey)
-                        : t('photoUploadFailed')
-                      : entry.status === 'uploading'
-                        ? t('photoUploading')
-                        : entry.detectedType ? `${entry.detectedType.toUpperCase()} · ${formatSize(entry.size)}` : formatSize(entry.size)}
-                </div>
-              </div>
-              {entry.status === 'uploading' ? (
-                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-emerald-600" />
-              ) : (
-                <button onClick={() => onRemove(entry.key)} aria-label={t('removeImage')} className="shrink-0 rounded-full p-1 text-gray-500 hover:bg-gray-100">
-                  <X className="h-4 w-4" />
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-    </StepShell>
-  );
-};
-
-const formatSize = (bytes: number): string => {
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-};
-
-// ── Step: Review ────────────────────────────────────────────────────────────────────────
-
-const ReviewStep = ({
-  draft,
-  parcels,
-  language,
-}: {
-  draft: ClaimDraft;
-  parcels: ParcelRecord[];
-  language: string;
-}) => {
-  const { t } = useTranslation();
-  const summary = buildReviewSummary(draft, parcels);
-  const stateKey = summary.ok ? 'ready' : `reviewReason_${summary.reason}`;
-  return (
-    <StepShell title={t('reviewTitle')}>
-      <dl className="space-y-2 text-sm">
-        <div className="flex justify-between gap-2">
-          <dt className="text-gray-500">{t('reviewParcel')}</dt>
-          <dd className="text-right font-semibold text-gray-900">{summary.parcelName ?? t('parcelNameLabel')}</dd>
-        </div>
-        {summary.crop && (
-          <div className="flex justify-between gap-2">
-            <dt className="text-gray-500">{t('parcelCropLabel')}</dt>
-            <dd className="text-right font-semibold text-gray-900">{summary.crop}</dd>
-          </div>
-        )}
-        <div className="flex justify-between gap-2">
-          <dt className="text-gray-500">{t('reviewArea')}</dt>
-          <dd className="text-right font-semibold text-gray-900">
-            {summary.claimedAreaAcres !== null
-              ? t('parcelAreaAcresLabel', { acres: summary.claimedAreaAcres })
-              : '—'}
-          </dd>
-        </div>
-        {/* Whole-parcel total is reference context only — it is NEVER the claimed area unless
-            the farmer explicitly chose the entire parcel above. */}
-        {summary.parcelAreaAcres !== null && (
-          <div className="flex justify-between gap-2">
-            <dt className="text-gray-500">{t('reviewParcelTotal')}</dt>
-            <dd className="text-right text-gray-600">
-              {t('parcelAreaAcresLabel', { acres: summary.parcelAreaAcres })}
-            </dd>
-          </div>
-        )}
-        <div className="flex justify-between gap-2">
-          <dt className="text-gray-500">{t('claimantRelationshipLabel')}</dt>
-          <dd className="text-right font-semibold text-gray-900">
-            {draft.claimantRelationship
-              ? t(claimantRelationshipLabelKey(draft.claimantRelationship))
-              : t('relationshipNotGiven')}
-          </dd>
-        </div>
-        <div className="flex justify-between gap-2">
-          <dt className="text-gray-500">{t('reviewEvent')}</dt>
-          <dd className="text-right font-semibold text-gray-900">
-            {summary.eventType ? t(claimEventLabelKey(summary.eventType)) : '—'}
-          </dd>
-        </div>
-        <div className="flex justify-between gap-2">
-          <dt className="text-gray-500">{t('reviewDate')}</dt>
-          <dd className="text-right font-semibold text-gray-900">
-            {summary.eventDate ? formatClaimDate(summary.eventDate, language) : '—'}
-          </dd>
-        </div>
-        <div className="flex justify-between gap-2">
-          <dt className="text-gray-500">{t('reviewEvidence')}</dt>
-          <dd className="text-right font-semibold text-gray-900">{summary.stagedEvidenceCount}</dd>
-        </div>
-      </dl>
-      <div className="mt-3 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2">
-        <span className={`text-sm font-medium ${summary.ok ? 'text-emerald-700' : 'text-red-600'}`}>
-          {summary.ok ? t('reviewReady') : t(stateKey)}
-        </span>
-        {summary.ok && (
-          <p className="mt-1 text-xs text-gray-500">
-            {summary.affectedIsWholeParcel ? t('reviewAreaWholeParcel') : t('reviewAreaPartial')}
-          </p>
-        )}
-      </div>
-    </StepShell>
-  );
-};
-
-// ── Shared shell ────────────────────────────────────────────────────────────────────────
-
-const StepShell = ({ title, children }: { title: string; children: React.ReactNode }) => (
-  <div>
-    <h3 className="mb-3 text-base font-bold text-gray-900">{title}</h3>
-    {children}
-  </div>
-);
 
 export default ClaimWizard;

@@ -65,15 +65,66 @@ export const registerUnauthorizedHandler = (handler: () => void): void => {
   unauthorizedHandler = handler;
 };
 
+// Optional details read from the response headers (CORS exposes Retry-After, x-request-id and
+// RateLimit-Reset since ADR-022; across origins without that they read as null).
+export interface ApiClientErrorMeta {
+  /** How long the server asked us to wait before trying again (429/503), in milliseconds. */
+  retryAfterMs?: number | null;
+  /** The backend's request id, for a support reference. Never shown as an error message. */
+  requestId?: string | null;
+}
+
 export class ApiClientError extends Error {
   readonly status: number;
+  readonly retryAfterMs: number | null;
+  readonly requestId: string | null;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, meta: ApiClientErrorMeta = {}) {
     super(message);
     this.name = 'ApiClientError';
     this.status = status;
+    this.retryAfterMs = meta.retryAfterMs ?? null;
+    this.requestId = meta.requestId ?? null;
   }
 }
+
+// Retry-After is either delta-seconds or an HTTP date (RFC 9110 §10.2.3). RateLimit-Reset
+// (express-rate-limit standard headers) is delta-seconds. Anything unparseable, negative or
+// absurdly long (over a day) is ignored rather than trusted.
+const MAX_RETRY_AFTER_MS = 24 * 60 * 60 * 1000;
+
+export const parseRetryAfterMs = (value: string | null | undefined, now: number = Date.now()): number | null => {
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  const text = value.trim();
+  let ms: number;
+  if (/^\d+(\.\d+)?$/.test(text)) ms = Number(text) * 1000;
+  else {
+    const at = Date.parse(text);
+    if (Number.isNaN(at)) return null;
+    ms = at - now;
+  }
+  if (!Number.isFinite(ms) || ms < 0 || ms > MAX_RETRY_AFTER_MS) return null;
+  return Math.round(ms);
+};
+
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{8,64}$/;
+
+const errorMetaFrom = (response: Response): ApiClientErrorMeta => {
+  // Tests (and some fetch polyfills) hand back plain objects without a Headers instance.
+  const headers = (response as { headers?: { get?: (name: string) => string | null } }).headers;
+  const read = (name: string): string | null => {
+    try {
+      return typeof headers?.get === 'function' ? headers.get(name) : null;
+    } catch {
+      return null;
+    }
+  };
+  const requestId = read('x-request-id');
+  return {
+    retryAfterMs: parseRetryAfterMs(read('retry-after')) ?? parseRetryAfterMs(read('ratelimit-reset')),
+    requestId: requestId && REQUEST_ID_PATTERN.test(requestId) ? requestId : null,
+  };
+};
 
 // Maps an HTTP status (0 = network/timeout/abort) to an i18n key with a user-safe message.
 // Raw backend messages are never shown directly.
@@ -202,13 +253,13 @@ export const request = async <T>(
 
   if (!envelope || typeof envelope !== 'object') {
     if (response.status === 401) handleUnauthorized();
-    throw new ApiClientError(response.status, friendlyMessageKey(response.status));
+    throw new ApiClientError(response.status, friendlyMessageKey(response.status), errorMetaFrom(response));
   }
 
   if (response.status === 401) handleUnauthorized();
 
   if (!response.ok) {
-    throw new ApiClientError(response.status, friendlyMessageKey(response.status));
+    throw new ApiClientError(response.status, friendlyMessageKey(response.status), errorMetaFrom(response));
   }
 
   return envelope;

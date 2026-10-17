@@ -12,7 +12,7 @@ describe('resolveClaimsViewport', () => {
     expect(vp.width).toBe(360);
     expect(vp.compact).toBe(true);
     expect(vp.columns).toBe(1);
-    expect(vp.stepIndicator).toBe('count'); // 6-step rail cannot fit at 360
+    expect(vp.stepIndicator).toBe('count'); // the 5-step rail cannot fit at 360
     expect(vp.reviewStacked).toBe(true);
   });
 

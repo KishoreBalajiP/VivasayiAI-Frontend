@@ -8,10 +8,54 @@
     text-size-adjust: 100%;
   }
 
+  /* The Tamil-capable font stack is the `sans` token in tailwind.config.js (applied by preflight). */
   body {
-    @apply antialiased;
-    font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
-      'Noto Sans Tamil', 'Lohit Tamil', sans-serif;
+    @apply antialiased font-sans;
+  }
+
+  /* One visible keyboard focus ring everywhere. Mouse clicks do not show it (:focus-visible).
+     Utilities such as focus:ring-* still layer on top where a component wants its own ring.
+
+     WCAG 1.4.11 needs the ring at 3:1 against the surface it is drawn on. The 2px offset puts it
+     on the PARENT's background, not on the control itself:
+       - light surfaces: brand-700, 5.5:1 on white, 5.3:1 on surface-muted, 5.0:1 on surface-sunken
+       - dark surfaces (data-surface="dark", e.g. the brand-900 header): brand-700 there is only
+         1.8:1 (1.4:1 on the brand-800 pills), so the ring turns white: 9.7:1 on brand-900,
+         7.7:1 on brand-800, 5.5:1 on brand-700
+       - a light panel inside a dark surface (data-surface="light" inside "dark", e.g. the header's
+         white user menu) gets brand-700 back
+     The scoped rules sit inside :where(), so their specificity equals the global rule's (later
+     rules win among the three), and any focus-visible:outline-* or focus:outline-none utility
+     on a control still overrides them. Pinned by UI-9 (tokens.test.ts reads this file) and UI-10
+     (Navbar.test.tsx); the rendered ring is checked in a real browser by the Playwright pass. */
+  :focus-visible {
+    outline: 2px solid theme('colors.brand.700');
+    outline-offset: 2px;
+  }
+
+  :where([data-surface='dark']) :focus-visible {
+    outline-color: theme('colors.white');
+  }
+
+  :where([data-surface='dark'] [data-surface='light']) :focus-visible {
+    outline-color: theme('colors.brand.700');
+  }
+
+  /* Respect the OS "reduce motion" setting: no pulsing skeletons, bouncing or smooth scrolling.
+     Spinners keep turning because they are the only sign that work is still in progress. */
+  @media (prefers-reduced-motion: reduce) {
+    .animate-pulse,
+    .animate-bounce,
+    .animate-ping {
+      animation: none !important;
+    }
+
+    *,
+    *::before,
+    *::after {
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 
   /* Keep inputs readable on iOS (no zoom jump) */

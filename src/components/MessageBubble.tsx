@@ -40,14 +40,16 @@ export const MessageBubble = ({ message, onRequestDelete }: MessageBubbleProps) 
       {/* AI avatar (agent identity only — never data) */}
       {!isUser && (
         <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-green-700 shadow-sm">
-          <Sprout className="h-4 w-4 text-white" />
+          <Sprout aria-hidden="true" className="h-4 w-4 text-white" />
         </div>
       )}
 
       <div
         className={`min-w-0 max-w-[86%] rounded-2xl px-3.5 py-2.5 text-[15px] leading-relaxed shadow-sm sm:max-w-[75%] ${
           isUser
-            ? 'rounded-tr-md bg-gradient-to-br from-emerald-600 to-green-700 text-white'
+            ? // Flat brand-700 token (white 5.5:1, the brand-100 timestamp 4.8:1); the copied
+              // gradient started at emerald-600, where white text was only ~3.8:1.
+              'rounded-tr-md bg-brand-700 text-white'
             : 'rounded-tl-md border border-gray-100 bg-white text-gray-800'
         }`}
       >
@@ -82,7 +84,7 @@ export const MessageBubble = ({ message, onRequestDelete }: MessageBubbleProps) 
         {/* KNOWLEDGE SOURCES (text answers): file names the backend grounded the answer in.
             Names only — the backend never returns chunk text or storage paths. */}
         {!isUser && message.sources && message.sources.length > 0 && (
-          <div className="mt-2 border-t border-gray-100 pt-1.5 text-[12px] text-gray-500" data-testid="chat-sources">
+          <div className="mt-2 border-t border-gray-100 pt-1.5 text-xs text-ink-subtle" data-testid="chat-sources">
             <span className="font-semibold">{t('chatSourcesLabel')}: </span>
             {uniqueSourceNames(message.sources).join(', ')}
           </div>
@@ -90,9 +92,7 @@ export const MessageBubble = ({ message, onRequestDelete }: MessageBubbleProps) 
 
         {/* TIMESTAMP */}
         <div
-          className={`mt-1.5 text-[11px] ${
-            isUser ? 'text-emerald-100' : 'text-gray-400'
-          }`}
+          className={`mt-1.5 text-2xs ${isUser ? 'text-brand-100' : 'text-ink-subtle'}`}
         >
           {timestamp.toLocaleTimeString([], {
             hour: '2-digit',
@@ -105,31 +105,34 @@ export const MessageBubble = ({ message, onRequestDelete }: MessageBubbleProps) 
       {showMenu && (
         <div className="relative shrink-0">
           <button
+            type="button"
             onClick={() => setMenuOpen((o) => !o)}
             aria-label={t('messageMenu')}
             aria-expanded={menuOpen}
             title={t('messageMenu')}
-            className="mt-1 flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+            className="mt-1 flex h-7 w-7 items-center justify-center rounded-lg text-ink-subtle transition-colors hover:bg-surface-sunken hover:text-ink-muted"
           >
-            <MoreVertical className="h-4 w-4" />
+            <MoreVertical aria-hidden="true" className="h-4 w-4" />
           </button>
 
           {menuOpen && (
             <>
               <button
+                type="button"
                 className="fixed inset-0 z-40 cursor-default"
-                aria-label="Close menu"
+                aria-label={t('closeMenu')}
                 onClick={() => setMenuOpen(false)}
               />
               <div className="absolute right-0 top-9 z-50 w-44 overflow-hidden rounded-xl border border-gray-100 bg-white py-1 shadow-xl">
                 <button
+                  type="button"
                   onClick={() => {
                     setMenuOpen(false);
                     onRequestDelete?.();
                   }}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-danger-fg hover:bg-danger-bg focus-visible:outline-offset-[-2px]"
                 >
-                  <Trash2 className="h-4 w-4" />
+                  <Trash2 aria-hidden="true" className="h-4 w-4" />
                   {t('deleteMessage')}
                 </button>
               </div>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Plus, X, ImageIcon, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { Button, ConfirmDialog } from './ui';
 import { ApiClientError, friendlyMessageKey } from '../api/client';
 import {
   deleteEvidenceUpload,
@@ -118,31 +119,29 @@ export const ClaimEvidenceGallery = ({
     [claimId, onChanged, t]
   );
 
+  const confirmIndex = confirmKey ? evidence.findIndex((entry) => entry.uploadId === confirmKey) : -1;
+
   if (evidence.length === 0 && !canEdit) {
     return (
-      <div className="rounded-2xl border border-gray-100 bg-white p-4 text-sm text-gray-500 shadow-sm">
+      <div className="rounded-card border border-surface-border bg-white p-4 text-sm text-ink-muted shadow-card">
         {t('noEvidenceText')}
       </div>
     );
   }
 
   return (
-    <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+    <div className="rounded-card border border-surface-border bg-white p-4 shadow-card">
       <div className="mb-3 flex items-center justify-between gap-2">
-        <h3 className="text-sm font-bold text-gray-800">{t('evidenceAmount')}</h3>
+        <h3 className="text-sm font-bold text-ink">{t('evidenceAmount')}</h3>
         {canEdit && (
-          <button
+          <Button
+            size="sm"
             onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-            className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-70"
+            loading={uploading}
+            leadingIcon={<Plus className="h-3.5 w-3.5" />}
           >
-            {uploading ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Plus className="h-3.5 w-3.5" />
-            )}
             {t('evidenceAdd')}
-          </button>
+          </Button>
         )}
       </div>
 
@@ -156,75 +155,66 @@ export const ClaimEvidenceGallery = ({
       />
 
       {evidence.length === 0 ? (
-        <p className="text-sm text-gray-500">{t('noEvidenceText')}</p>
+        <p className="text-sm text-ink-muted">{t('noEvidenceText')}</p>
       ) : (
         <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5">
-          {evidence.map((entry) => {
+          {evidence.map((entry, index) => {
             const thumb = thumbnails[entry.uploadId];
             const isBusy = busyKey === entry.uploadId;
             return (
               <li
                 key={entry.uploadId}
-                className="group relative aspect-square overflow-hidden rounded-xl border border-gray-200 bg-gray-50"
+                className="relative aspect-square overflow-hidden rounded-control border border-surface-border bg-surface-muted"
               >
                 {thumb ? (
                   <img
                     src={thumb}
-                    alt={entry.mediaType}
+                    alt={t('evidencePhotoAlt', { n: index + 1 })}
                     className="h-full w-full object-cover"
                     loading="lazy"
                   />
                 ) : (
-                  <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-gray-400">
+                  <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-ink-subtle">
                     {entry.status === 'stored' || entry.status === 'completed' ? (
-                      <ImageIcon className="h-5 w-5" />
+                      <ImageIcon aria-hidden="true" className="h-5 w-5" />
                     ) : (
-                      <Loader2 className="h-5 w-5 animate-spin" />
+                      <Loader2 aria-hidden="true" className="h-5 w-5 animate-spin" />
                     )}
-                    <span className="px-1 text-center text-[10px] leading-tight text-gray-500">
+                    <span className="px-1 text-center text-2xs leading-tight text-ink-muted">
                       {t(evidenceStatusLabelKey(entry.status))}
                     </span>
                   </div>
                 )}
                 {canEdit && (
-                  <>
-                    {confirmKey === entry.uploadId ? (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/70 p-1">
-                        <span className="text-center text-[10px] leading-tight text-white">
-                          {t('evidenceDeleteConfirm')}
-                        </span>
-                        <div className="flex gap-1">
-                          <button
-                            onClick={() => void handleDelete(entry.uploadId)}
-                            disabled={isBusy}
-                            className="rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-semibold text-white disabled:opacity-60"
-                          >
-                            {isBusy ? t('loading') : t('delete')}
-                          </button>
-                          <button
-                            onClick={() => setConfirmKey(null)}
-                            className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-gray-800"
-                          >
-                            {t('cancel')}
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => setConfirmKey(entry.uploadId)}
-                        aria-label={t('evidenceDelete')}
-                        className="absolute right-1 top-1 rounded-full bg-white/90 p-1 text-gray-700 opacity-0 shadow transition group-hover:opacity-100 focus:opacity-100"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </>
+                  // Always visible (not hover-only): touch screens and keyboards have no hover.
+                  <button
+                    type="button"
+                    onClick={() => setConfirmKey(entry.uploadId)}
+                    disabled={isBusy}
+                    aria-label={t('evidenceDeleteItem', { n: index + 1 })}
+                    className="absolute right-1 top-1 inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/95 text-ink shadow hover:bg-white disabled:opacity-60"
+                  >
+                    {isBusy ? <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin" /> : <X aria-hidden="true" className="h-3.5 w-3.5" />}
+                  </button>
                 )}
               </li>
             );
           })}
         </ul>
       )}
+
+      <ConfirmDialog
+        open={confirmKey !== null}
+        tone="danger"
+        title={t('evidenceDeleteConfirm')}
+        body={t('evidenceDeleteBody')}
+        confirmLabel={confirmIndex >= 0 ? t('evidenceDeleteItem', { n: confirmIndex + 1 }) : t('evidenceDelete')}
+        busy={busyKey !== null}
+        onConfirm={() => {
+          if (confirmKey) void handleDelete(confirmKey);
+        }}
+        onCancel={() => setConfirmKey(null)}
+      />
     </div>
   );
 };

@@ -20,6 +20,9 @@ export default defineConfig({
           environment: 'node',
           include: ['src/**/*.test.ts'],
           setupFiles: ['src/test/setup.ts'],
+          // Vitest replaces every .css import with an empty string, even `?raw`. Let the global
+          // stylesheet through (raw, unprocessed) so UI-9 can pin the focus-ring rules in it.
+          css: { include: [/\/src\/index\.css(?:$|\?)/] },
         },
       },
       {
