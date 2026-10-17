@@ -34,6 +34,9 @@ interface NominatimAddress {
   state_district?: string;
   district?: string;
   state?: string;
+  // ISO 3166-2 subdivision code, e.g. "IN-TN" (Tamil Nadu), "IN-AP" (Andhra Pradesh). The most
+  // reliable state signal Nominatim returns; tnClassifier prefers it over the state name.
+  'ISO3166-2-lvl4'?: string;
   country?: string;
 }
 
@@ -44,6 +47,8 @@ export interface ReverseGeocodeResult {
   subDistrict: string | null;
   district: string | null;
   state: string | null;
+  // ISO 3166-2 code from Nominatim's `ISO3166-2-lvl4` (e.g. "IN-TN"); null when not returned.
+  stateCode: string | null;
   country: string | null;
 }
 
@@ -100,7 +105,16 @@ export const reverseGeocode = async (
     const subDistrict = clean(address.county) || clean(address.state_district) || null;
     const district = normalizeDistrict(clean(address.district) || clean(address.state_district));
 
-    return { locality, village, townCity, subDistrict, district, state: clean(address.state), country: clean(address.country) };
+    return {
+      locality,
+      village,
+      townCity,
+      subDistrict,
+      district,
+      state: clean(address.state),
+      stateCode: clean(address['ISO3166-2-lvl4']),
+      country: clean(address.country),
+    };
   } catch {
     // Timeout / network failure / abort — caller keeps its district-level fallback.
     return null;

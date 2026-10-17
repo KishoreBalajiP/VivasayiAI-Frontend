@@ -1,46 +1,49 @@
 import { useTranslation } from 'react-i18next';
-import { CheckCircle2, XCircle, Loader2, Info } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Info, Loader2, XCircle } from 'lucide-react';
 import type { ClaimState } from '../types';
 import {
   claimStateLabelKey,
+  decisionReasonKeys,
   formatClaimDate,
+  overlapWarningMessage,
   verificationResultModel,
   type VerificationResultModel,
 } from '../utils/claimFlow';
+import { Badge, cn, type Tone } from './ui';
 import type { VerificationDecision } from '../types';
 
-// FROZEN display tones for the ten claim states (ADR-019 / claimState.service.js).
-const STATE_TONE: Record<string, string> = {
-  draft: 'bg-gray-100 text-gray-700',
-  submitted: 'bg-blue-100 text-blue-800',
-  processing: 'bg-amber-100 text-amber-800',
-  verified: 'bg-emerald-100 text-emerald-800',
-  partially_verified: 'bg-teal-100 text-teal-800',
-  more_evidence_required: 'bg-amber-100 text-amber-800',
-  rejected: 'bg-red-100 text-red-700',
-  out_of_limit: 'bg-orange-100 text-orange-800',
-  duplicate_area: 'bg-purple-100 text-purple-800',
-  withdrawn: 'bg-gray-200 text-gray-600',
+// Semantic tones for the ten frozen claim states (ADR-019 / claimState.service.js). Colour is never
+// the only signal: every badge also carries an icon and the translated state name.
+const STATE_TONE: Record<string, Tone> = {
+  draft: 'quiet',
+  withdrawn: 'quiet',
+  submitted: 'info',
+  processing: 'info',
+  verified: 'success',
+  partially_verified: 'success',
+  more_evidence_required: 'warning',
+  rejected: 'danger',
+  out_of_limit: 'danger',
+  duplicate_area: 'danger',
 };
 
-export const claimStateTone = (state: string): string => STATE_TONE[state] ?? 'bg-gray-100 text-gray-700';
+export const claimStateTone = (state: string): Tone => STATE_TONE[state] ?? 'quiet';
 
 export interface ClaimStateBadgeProps {
   state: ClaimState;
   className?: string;
 }
 
-export const ClaimStateBadge = ({ state, className = '' }: ClaimStateBadgeProps) => {
+export const ClaimStateBadge = ({ state, className }: ClaimStateBadgeProps) => {
   const { t } = useTranslation();
   return (
-    <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${claimStateTone(state)} ${className}`}
+    <Badge
+      tone={claimStateTone(state)}
+      icon={state === 'processing' ? Loader2 : state === 'verified' ? CheckCircle2 : state === 'rejected' ? XCircle : undefined}
+      className={className}
     >
-      {state === 'processing' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-      {state === 'verified' && <CheckCircle2 className="mr-1 h-3 w-3" />}
-      {state === 'rejected' && <XCircle className="mr-1 h-3 w-3" />}
       {t(claimStateLabelKey(state))}
-    </span>
+    </Badge>
   );
 };
 
@@ -49,14 +52,16 @@ export const ClaimStateBadge = ({ state, className = '' }: ClaimStateBadgeProps)
 // vocabulary (the verification outcome IS a claim state value). Rule checks are backend engine
 // reports shown as an explainable pass/fail list — never a client opinion. Supporting-only rules
 // (weather) are listed without a verdict.
+//
+// The backend's `reason` and overlap `message` are English free text (an override's reason is the
+// reviewer's own note), so neither is ever shown: the reasons are rebuilt from the failing rules
+// (decisionReasonKeys) and the warnings from their stable codes (overlapWarningMessage).
 
 export interface VerificationResultCardProps {
   verification: VerificationDecision;
   language: string;
   compact?: boolean;
 }
-
-const RULE_LABEL_KEY_PREFIX = 'claimRule_';
 
 export const VerificationResultCard = ({
   verification,
@@ -65,59 +70,57 @@ export const VerificationResultCard = ({
 }: VerificationResultCardProps) => {
   const { t } = useTranslation();
   const model: VerificationResultModel = verificationResultModel(verification);
-
-  const approvedTone =
-    model.outcomeLabelKey === 'claimState_verified'
-      ? 'bg-emerald-50 border-emerald-200'
-      : model.outcomeLabelKey === 'claimState_rejected' || model.outcomeLabelKey === 'claimState_out_of_limit'
-        ? 'bg-red-50 border-red-200'
-        : 'bg-amber-50 border-amber-200';
+  const outcome = verification.outcome;
+  const reasonKeys = decisionReasonKeys(model.rules, outcome, model.decidedBy);
 
   return (
-    <div className={`rounded-2xl border border-gray-100 bg-white p-4 shadow-sm ${compact ? 'mt-3' : ''}`}>
+    <div className={cn('rounded-card border border-surface-border bg-white p-4 shadow-card', compact && 'mt-3')}>
       <div className="mb-3 flex items-center justify-between gap-2">
-        <h3 className="text-sm font-bold text-gray-800">{t('verificationResultTitle')}</h3>
-        {model.outcomeLabelKey && (
-          <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${approvedTone}`}>
+        <h3 className="text-sm font-bold text-ink">{t('verificationResultTitle')}</h3>
+        {model.outcomeLabelKey && outcome && (
+          <Badge tone={claimStateTone(outcome)} data-testid="decision-outcome">
             {t(model.outcomeLabelKey)}
-          </span>
+          </Badge>
         )}
       </div>
 
-      {model.reason && (
-        <div className="mb-3 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2 text-sm text-gray-700">
-          {model.reason}
-        </div>
-      )}
+      {/* Why: translated from the engine's rule report, never the backend's English reason. */}
+      <div className="mb-3 rounded-control border border-surface-border bg-surface-muted px-3 py-2 text-sm text-ink" data-testid="decision-reasons">
+        <p className="mb-0.5 text-xs font-semibold uppercase tracking-wide text-ink-subtle">{t('decisionReasonsTitle')}</p>
+        <ul className="space-y-0.5">
+          {reasonKeys.map((key) => (
+            <li key={key}>{t([key, 'decisionReason_outcome_unknown'])}</li>
+          ))}
+        </ul>
+      </div>
 
       {/* Deterministic engine rule checks */}
       {model.ruleRows.length > 0 && (
         <div className="mb-3">
-          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-subtle">
             {t('rulesLabel')}
           </div>
           <ul className="space-y-1">
             {model.ruleRows.map((row) => (
               <li key={row.name} className="flex items-center justify-between text-sm">
-                <span className="text-gray-600">
-                  {t(hasRuleLabel(row.labelKey) ? row.labelKey : row.name)}
-                </span>
+                <span className="text-ink-muted">{t([row.labelKey, 'claimRule_unknown'])}</span>
                 {row.supportingOnly ? (
                   // Supporting evidence (weather) never passes or fails a claim on its own.
-                  <span className="inline-flex items-center gap-1 text-xs font-semibold text-gray-500">
-                    <Info className="h-3.5 w-3.5" />
+                  <span className="inline-flex items-center gap-1 text-xs font-semibold text-ink-muted">
+                    <Info aria-hidden="true" className="h-3.5 w-3.5" />
                     {t('ruleSupportingOnly')}
                   </span>
                 ) : (
                   <span
-                    className={`inline-flex items-center gap-1 text-xs font-semibold ${
-                      row.passed ? 'text-emerald-700' : 'text-red-600'
-                    }`}
+                    className={cn(
+                      'inline-flex items-center gap-1 text-xs font-semibold',
+                      row.passed ? 'text-success-fg' : 'text-danger-fg'
+                    )}
                   >
                     {row.passed ? (
-                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      <CheckCircle2 aria-hidden="true" className="h-3.5 w-3.5" />
                     ) : (
-                      <XCircle className="h-3.5 w-3.5" />
+                      <XCircle aria-hidden="true" className="h-3.5 w-3.5" />
                     )}
                     {row.passed ? t('rulePassed') : t('ruleFailed')}
                   </span>
@@ -128,79 +131,74 @@ export const VerificationResultCard = ({
         </div>
       )}
 
-      {/* Backend area numbers — never client math */}
+      {/* Backend area numbers — never client math. Every <dt> has its <dd>. */}
       <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
         {model.approvedAreaAcres !== null && (
           <div>
-            <dt className="text-xs text-gray-500">{t('approvedAreaLabel', { acres: model.approvedAreaAcres })}</dt>
+            <dt className="text-xs text-ink-subtle">{t('approvedAreaTitle')}</dt>
+            <dd className="font-semibold text-ink">
+              {model.approvedAreaAcres} {t('acre')}
+            </dd>
           </div>
         )}
         <div>
-          <dt className="text-xs text-gray-500">{t('claimedAreaResultLabel')}</dt>
-          <dd className="font-semibold text-gray-800">
+          <dt className="text-xs text-ink-subtle">{t('claimedAreaResultLabel')}</dt>
+          <dd className="font-semibold text-ink">
             {model.claimedAreaAcres !== null ? `${model.claimedAreaAcres} ${t('acre')}` : '—'}
           </dd>
         </div>
         <div>
-          <dt className="text-xs text-gray-500">{t('parcelAreaResultLabel')}</dt>
-          <dd className="font-semibold text-gray-800">
+          <dt className="text-xs text-ink-subtle">{t('parcelAreaResultLabel')}</dt>
+          <dd className="font-semibold text-ink">
             {model.parcelAreaAcres !== null ? `${model.parcelAreaAcres} ${t('acre')}` : '—'}
           </dd>
         </div>
-        {model.weatherCorrelation !== null && typeof model.weatherCorrelation === 'string' && (
-          <div>
-            <dt className="text-xs text-gray-500">{t('weatherCorrelationLabel')}</dt>
-            <dd className="font-semibold text-gray-800">{model.weatherCorrelation}</dd>
-          </div>
-        )}
         {/* Phase 9 (E9-S9) — remaining eligible & overlap budget */}
         {model.remainingEligible !== null && (
           <div>
-            <dt className="text-xs text-gray-500">{t('remainingEligibleLabel')}</dt>
-            <dd className="font-semibold text-emerald-700">{model.remainingEligible} {t('acre')}</dd>
+            <dt className="text-xs text-ink-subtle">{t('remainingEligibleLabel')}</dt>
+            <dd className="font-semibold text-ink">{model.remainingEligible} {t('acre')}</dd>
           </div>
         )}
         {model.previouslyVerifiedAcres !== null && model.previouslyVerifiedAcres > 0 && (
           <div>
-            <dt className="text-xs text-gray-500">{t('previouslyVerifiedLabel')}</dt>
-            <dd className="font-semibold text-gray-700">{model.previouslyVerifiedAcres} {t('acre')}</dd>
+            <dt className="text-xs text-ink-subtle">{t('previouslyVerifiedLabel')}</dt>
+            <dd className="font-semibold text-ink">{model.previouslyVerifiedAcres} {t('acre')}</dd>
           </div>
         )}
         {model.inFlightAreaAcres !== null && model.inFlightAreaAcres > 0 && (
           <div>
-            <dt className="text-xs text-gray-500">{t('inFlightLabel')}</dt>
-            <dd className="font-semibold text-amber-700">{model.inFlightAreaAcres} {t('acre')}</dd>
+            <dt className="text-xs text-ink-subtle">{t('inFlightLabel')}</dt>
+            <dd className="font-semibold text-ink">{model.inFlightAreaAcres} {t('acre')}</dd>
           </div>
         )}
         {model.verifiedAreaAcres !== null && (
           <div>
-            <dt className="text-xs text-gray-500">{t('verifiedAreaLabel')}</dt>
-            <dd className="font-semibold text-emerald-800">{model.verifiedAreaAcres} {t('acre')}</dd>
+            <dt className="text-xs text-ink-subtle">{t('verifiedAreaLabel')}</dt>
+            <dd className="font-semibold text-ink">{model.verifiedAreaAcres} {t('acre')}</dd>
           </div>
         )}
       </dl>
 
-      {/* Phase 9 (E9-S9) — Overlap warnings */}
+      {/* Phase 9 (E9-S9) — Overlap warnings, from their codes */}
       {model.overlapWarnings.length > 0 && (
-        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
-          <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-amber-800">
-            <XCircle className="h-3.5 w-3.5" />
+        <div className="mt-3 rounded-control border border-warning-border bg-warning-bg p-3 text-sm" data-testid="overlap-warnings">
+          <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-warning-fg">
+            <AlertTriangle aria-hidden="true" className="h-3.5 w-3.5" />
             {t('overlapWarningsTitle')}
           </div>
-          <ul className="space-y-1">
-            {model.overlapWarnings.map((warning, idx) => (
-              <li key={idx} className="flex items-start gap-2 text-amber-700">
-                <span className="mt-0.5 h-1.5 w-1.5 rounded-full bg-amber-500" />
-                <span>{warning.message}</span>
-              </li>
-            ))}
+          <ul className="list-disc space-y-1 pl-5 text-warning-fg">
+            {model.overlapWarnings.map((warning, idx) => {
+              const message = overlapWarningMessage(warning);
+              return <li key={`${warning.code}:${idx}`}>{t(message.key, message.params)}</li>;
+            })}
           </ul>
         </div>
       )}
 
       {/* Phase 9 (E9-S9) — Outcome-specific detail messages */}
       {(model.outcomeLabelKey === 'claimState_duplicate_area' || model.outcomeLabelKey === 'claimState_partially_verified' || model.outcomeLabelKey === 'claimState_out_of_limit') && (
-        <div className="mb-3 rounded-xl border border-gray-100 bg-gray-50 p-3 text-sm text-gray-700">
+        <div className="mt-3 rounded-control border border-surface-border bg-surface-muted p-3 text-sm text-ink">
           {model.outcomeLabelKey === 'claimState_duplicate_area' && t('duplicateAreaDetail')}
           {model.outcomeLabelKey === 'claimState_partially_verified' &&
             model.verifiedAreaAcres !== null && t('partiallyVerifiedDetail', { acres: model.verifiedAreaAcres })}
@@ -210,11 +208,11 @@ export const VerificationResultCard = ({
         </div>
       )}
 
-      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-gray-100 pt-2 text-xs text-gray-500">
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-surface-border pt-2 text-xs text-ink-subtle">
         {model.decidedAt && <span>{t('decidedAtLabel')}: {formatClaimDate(model.decidedAt, language)}</span>}
         {model.decidedBy && (
           <span>
-            {t('decidedByLabel')}: {model.decidedBy === 'engine' ? t('engineLabel') : model.decidedBy}
+            {t('decidedByLabel')}: {model.decidedBy === 'engine' ? t('engineLabel') : t('decidedByReviewer')}
           </span>
         )}
         {model.evidenceVersion && <span>{t('evidenceVersionLabel')}: {model.evidenceVersion}</span>}
@@ -223,8 +221,3 @@ export const VerificationResultCard = ({
     </div>
   );
 };
-
-function hasRuleLabel(key: string): boolean {
-  // i18next returns the key unchanged when a key is missing — that is the honest fallback.
-  return key.startsWith(RULE_LABEL_KEY_PREFIX);
-}

@@ -37,6 +37,8 @@ interface ClaimOwnershipDocumentsProps {
   language: string;
   // Called after a document is attached so the detail view can refresh its checklist.
   onChanged?: () => void;
+  // Called with the documents after every successful load (the tracker's evidence summary counts them).
+  onLoaded?: (documents: OwnershipEvidence[]) => void;
 }
 
 const firstExpectedCategory = (
@@ -50,6 +52,7 @@ export const ClaimOwnershipDocuments = ({
   canAttach,
   language,
   onChanged,
+  onLoaded,
 }: ClaimOwnershipDocumentsProps) => {
   const { t } = useTranslation();
   const [documents, setDocuments] = useState<OwnershipEvidence[] | null>(null);
@@ -61,6 +64,9 @@ export const ClaimOwnershipDocuments = ({
   const [viewing, setViewing] = useState<{ id: string; url: string | null } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const requestIdRef = useRef(0);
+  // Read through a ref so an inline callback from the parent never re-triggers the load.
+  const onLoadedRef = useRef(onLoaded);
+  onLoadedRef.current = onLoaded;
 
   const load = useCallback(async () => {
     const requestId = ++requestIdRef.current;
@@ -68,7 +74,9 @@ export const ClaimOwnershipDocuments = ({
     try {
       const list = await listOwnershipEvidence(claimId);
       if (requestIdRef.current !== requestId) return;
-      setDocuments(list.evidence ?? []);
+      const evidence = list.evidence ?? [];
+      setDocuments(evidence);
+      onLoadedRef.current?.(evidence);
     } catch (err) {
       if (requestIdRef.current !== requestId) return;
       if (err instanceof ApiClientError && err.status === 401) return; // auth layer
@@ -269,8 +277,8 @@ export const ClaimOwnershipDocuments = ({
         </div>
       )}
 
-      <p className="mt-3 text-[11px] text-gray-500">{t('ownershipImagesOnlyHint')}</p>
-      <p className="mt-1 text-[11px] text-gray-500">{t('ownershipNotOfficial')}</p>
+      <p className="mt-3 text-2xs text-ink-subtle">{t('ownershipImagesOnlyHint')}</p>
+      <p className="mt-1 text-2xs text-ink-subtle">{t('ownershipNotOfficial')}</p>
     </section>
   );
 };

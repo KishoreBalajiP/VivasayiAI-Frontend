@@ -67,7 +67,23 @@ export const isDecisionState = (state: string): boolean => DECISION_STATE_SET.ha
 
 export const canAppealState = (state: string): boolean => APPEALABLE_DECISION_STATE_SET.has(state);
 
-export const canOverrideFrom = (state: string): boolean => OVERRIDEABLE_STATE_SET.has(state);
+// Mirrors adminOverrideRules.service.js isOverrideableFrom. Owner decision D8: a `submitted` claim
+// the engine is HOLDING for a person (no decision exists, none will be made automatically) may be
+// overridden too; `submitted` stays out of OVERRIDEABLE_STATES and is admitted only with held.
+export const canOverrideFrom = (state: string, options: { held?: boolean } = {}): boolean =>
+  OVERRIDEABLE_STATE_SET.has(state) || (state === 'submitted' && options.held === true);
+
+// A claim is held when it is still `submitted`, its assessment carries no decision state and the
+// engine recorded a hold (backend isHeldAssessment). The admin detail carries the assessment's
+// `verification` record; the farmer serializer's `held` flag is accepted too.
+export const isHeldClaimDetail = (
+  detail: Pick<AdminClaimDetail, 'state' | 'assessment'> | null | undefined
+): boolean => {
+  if (!detail || detail.state !== 'submitted' || !detail.assessment) return false;
+  const assessment = detail.assessment;
+  if (assessment.state) return false;
+  return assessment.held === true || assessment.verification?.status === 'held';
+};
 
 export const inDefaultQueue = (state: string): boolean => QUEUE_STATE_SET.has(state);
 
@@ -102,6 +118,7 @@ export const buildAdminQueryString = (
   if (filters.eventType && typeof filters.eventType === 'string') params.push(`eventType=${encodeURIComponent(filters.eventType)}`);
   if (filters.withAppeal === 'true' || filters.withAppeal === 'false') params.push(`withAppeal=${filters.withAppeal}`);
   if (filters.aiFailed === 'true' || filters.aiFailed === 'false') params.push(`aiFailed=${filters.aiFailed}`);
+  if (filters.held === 'true' || filters.held === 'false') params.push(`held=${filters.held}`);
   if (typeof filters.search === 'string' && filters.search.trim()) {
     params.push(`search=${encodeURIComponent(filters.search.trim())}`);
   }
@@ -133,16 +150,18 @@ export interface OverrideFormState {
   approverSub?: string;
   overrideKey: string;
   currentState: string;
+  /** The claim is held (D8): a `submitted` claim may then be overridden. */
+  held?: boolean;
 }
 
 export const validateOverride = (
-  form: Pick<OverrideFormState, 'toState' | 'reason' | 'adminNote' | 'overrideKey' | 'currentState'>
+  form: Pick<OverrideFormState, 'toState' | 'reason' | 'adminNote' | 'overrideKey' | 'currentState' | 'held'>
 ): OverrideValidation => {
-  const { toState, reason, adminNote, overrideKey, currentState } = form;
+  const { toState, reason, adminNote, overrideKey, currentState, held } = form;
   if (!toState) return { ok: false, reason: 'noState' };
   if (!isDecisionState(toState)) return { ok: false, reason: 'notDecision' };
   if (toState === currentState) return { ok: false, reason: 'sameState' };
-  if (!canOverrideFrom(currentState)) return { ok: false, reason: 'notOverrideable' };
+  if (!canOverrideFrom(currentState, { held })) return { ok: false, reason: 'notOverrideable' };
   const trimmedReason = (reason ?? '').trim();
   if (!trimmedReason) return { ok: false, reason: 'reasonRequired' };
   if (trimmedReason.length < OVERRIDE_REASON_MIN_LENGTH) return { ok: false, reason: 'reasonTooShort' };
@@ -174,6 +193,7 @@ export interface QueueViewModel {
   stateLabelKey: string;
   hasAppeal: boolean;
   aiFailed: boolean;
+  held: boolean;
   decidedAt: string | null;
   decisionReason: string | null;
   appealReason: string | null;
@@ -182,16 +202,17 @@ export interface QueueViewModel {
 export const queueEntryViewModel = (entry: AdminQueueEntry): QueueViewModel => ({
   id: entry.id,
   parcelName: entry.parcelName,
-  crop: entry.crop,
+  crop: entry.parcelCrop ?? entry.crop ?? null,
   eventTypeLabelKey: `claimEvent_${entry.eventType}`,
   eventDate: entry.eventDate,
   claimedAreaAcres: entry.claimedAreaAcres,
   state: entry.state,
   stateLabelKey: `claimState_${entry.state}`,
   hasAppeal: Boolean(entry.hasAppeal),
-  aiFailed: Boolean(entry.aiFailed),
+  aiFailed: Boolean(entry.assessment?.aiFailed ?? entry.aiFailed),
+  held: Boolean(entry.held),
   decidedAt: entry.decidedAt,
-  decisionReason: entry.decisionReason,
+  decisionReason: entry.assessment?.reason ?? entry.decisionReason ?? null,
   appealReason: entry.appealReason,
 });
 
@@ -290,7 +311,7 @@ export const investigationFlagTextKey = (code: string): string => `adminInvest_f
 // ── Admin detail helpers ───────────────────────────────────────────────────────────────
 
 export const canShowOverride = (detail: AdminClaimDetail | null): boolean =>
-  Boolean(detail && canOverrideFrom(detail.state));
+  Boolean(detail && canOverrideFrom(detail.state, { held: isHeldClaimDetail(detail) }));
 
 export const claimAppealSummary = (detail: AdminClaimDetail | null): {
   count: number;

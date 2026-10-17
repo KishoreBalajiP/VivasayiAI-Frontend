@@ -4,7 +4,8 @@ import { useAuth } from '../context/AuthContext';
 import { createProfile } from '../api';
 import { ApiClientError } from '../api/client';
 import { tamilNaduDistricts } from '../config/tamilnaduDistricts';
-import { Loader2, X } from 'lucide-react';
+import { X } from 'lucide-react';
+import { Button } from './ui';
 import type { FarmProfile, FarmProfileInput, Language } from '../types';
 
 interface Props {
@@ -303,23 +304,11 @@ export const FarmProfileEditor = ({ existingProfile, onComplete, onCancel }: Pro
           </p>
         )}
 
-        <button
-          onClick={handleSubmit}
-          disabled={isSubmitting}
-          className="w-full bg-gradient-to-r from-emerald-600 to-green-700 hover:from-emerald-700 hover:to-green-800 text-white font-bold py-3 px-4 rounded-xl
-            text-base sm:text-lg shadow-md hover:shadow-lg transition-all duration-200
-            disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:from-emerald-600 disabled:hover:to-green-700
-            flex items-center justify-center gap-2"
-        >
-          {isSubmitting ? (
-            <>
-              <Loader2 className="w-5 h-5 animate-spin" />
-              {submittingLabel}
-            </>
-          ) : (
-            submitLabel
-          )}
-        </button>
+        {/* Shared primary Button (flat brand-700, 5.5:1 with white text; the old gradient started at
+            a 3.8:1 emerald-600). While saving it is disabled, aria-busy and shows a spinner. */}
+        <Button size="lg" onClick={handleSubmit} loading={isSubmitting} className="w-full sm:text-lg">
+          {isSubmitting ? submittingLabel : submitLabel}
+        </Button>
       </div>
     </div>
   );

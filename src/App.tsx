@@ -5,11 +5,14 @@ import { ProfileOnboarding } from './components/ProfileOnboarding';
 import { FarmProfileEditor } from './components/FarmProfileEditor';
 import { ManageParcels } from './components/ManageParcels';
 import ChatSidebar from './components/ChatSidebar';
-import { Navbar, type AppSection } from './components/Navbar';
+import { Navbar } from './components/Navbar';
 import { WeatherPanel } from './components/WeatherPanel';
 import { ClaimsPage } from './components/ClaimsPage';
 import { AdminReviewPage } from './components/AdminReviewPage';
 import { LocationProvider } from './context/LocationContext';
+import { Button } from './components/ui';
+import { DEFAULT_ROUTE, routeForSection, type AppSection } from './routing/hashRoute';
+import { useHashRoute } from './routing/useHashRoute';
 import { Loader2 } from 'lucide-react';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -27,7 +30,22 @@ function App() {
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [refreshChats, setRefreshChats] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [section, setSection] = useState<AppSection>('chat');
+
+  // The section comes from the URL hash (#/chat, #/claims…, #/admin), so browser Back/Forward
+  // switch sections. The full route (view, claimId) is available to any component through
+  // useHashRoute(); ClaimsPage derives its list / wizard / claim-tracker view from it, so
+  // #/claims/<id> opens that claim's tracker on load, on reload and from a shared link.
+  const { route, navigate } = useHashRoute();
+  const section: AppSection = route.section;
+  const selectSection = useCallback(
+    (next: AppSection) => navigate(routeForSection(next)),
+    [navigate]
+  );
+
+  // An unknown hash renders chat and is rewritten in place (no extra history entry).
+  useEffect(() => {
+    if (route.unknown) navigate(DEFAULT_ROUTE, { replace: true });
+  }, [route, navigate]);
 
   // Farm profile is needed for personalized advice, but it is NOT a gate for the location
   // experience: location + weather work independently. If missing, a dismissible onboarding
@@ -64,7 +82,9 @@ function App() {
     } catch (err) {
       if (err instanceof ApiClientError && err.status === 401) return; // auth layer handles
       if (err instanceof ApiClientError && err.status === 404) {
-        // Backend contract: GET /profile returns 404 when no profile exists.
+        // Backend contract: GET /profile returns 404 when no profile exists. Drop any profile
+        // from an earlier load so its district is not shown as still known.
+        setProfile(null);
         setProfileStatus('missing');
         return;
       }
@@ -143,11 +163,10 @@ const handleDeleteActiveChat = useCallback(async () => {
   }
 
   if (!user) {
-    // Public landing page (premium two-panel). LocationProvider is shared with the
-    // authenticated shell so a location resolved pre-login (or in a previous session) is
-    // never re-prompted; `autoRequest={false}` means the landing page never auto-prompts for
-    // permission — the user taps "Use my location", then after login location simply carries
-    // forward and the weather/insight flow picks up from there.
+    // Public landing page (premium two-panel). It is farm-first like the shell: it explains that
+    // weather and advice follow the farm district and never shows a device place name or an
+    // "Outside Tamil Nadu" verdict. The provider stays so a session location carries over, but
+    // `autoRequest={false}` means nothing ever prompts for permission here.
     return (
       <LocationProvider autoRequest={false}>
         <LoginScreen />
@@ -155,20 +174,40 @@ const handleDeleteActiveChat = useCallback(async () => {
     );
   }
 
+  // What the shell knows about the farm. A reload (e.g. after Manage Parcels closes) sets the
+  // status back to 'loading', and a failed reload to 'error', but the profile already in state
+  // is kept: a district the app knows must not be hidden or turned into "Set farm district" while
+  // a reload is in flight or after it failed. Only with no district at all does loading/error
+  // mean "unknown". (A 404 clears the profile in loadProfile, so a stale one never lingers.)
+  const farmDistrict = profile?.district?.trim() || null;
+  const profileUnknown = !farmDistrict && (profileStatus === 'loading' || profileStatus === 'error');
+  const hasProfile = profileStatus === 'loaded' || (profile !== null && profileStatus !== 'missing');
+
+  // Farm-first: the header and the default weather use the PROFILE farm district. The device
+  // location is never requested automatically (autoRequest={false}); the farmer opts in from the
+  // weather strip or the parcel map's "My location" control.
   return (
-    <LocationProvider autoRequest>
+    <LocationProvider autoRequest={false}>
       <div className="flex h-dvh flex-col overflow-hidden bg-gray-50">
         {/* NAVBAR — always fully visible (in-flow, first child, everything below is min-h-0) */}
         <Navbar
-          hasProfile={profileStatus === 'loaded'}
+          hasProfile={hasProfile}
+          farmDistrict={farmDistrict}
+          profileUnknown={profileUnknown}
           onOpenProfile={openFarmProfileEditor}
           onOpenManageParcels={openManageParcels}
           section={section}
-          onSelectSection={setSection}
+          onSelectSection={selectSection}
         />
 
-        {/* LOCATION + WEATHER DASHBOARD (location-first, independent of profile) */}
-        {section !== 'admin' && <WeatherPanel profile={profile} />}
+        {/* WEATHER STRIP (farm district by default; device location only when chosen) */}
+        {section !== 'admin' && (
+          <WeatherPanel
+            profile={profile}
+            profileUnknown={profileUnknown}
+            onOpenProfile={openFarmProfileEditor}
+          />
+        )}
 
         {/* WORKSPACE: sidebar drawer + chat, claims section, or the admin review workflow */}
         <div className="relative flex min-h-0 flex-1 overflow-hidden">
@@ -176,7 +215,7 @@ const handleDeleteActiveChat = useCallback(async () => {
             !isAdmin ? (
               // Non-admin fallback: the signed role can never unlock this section — render a
               // benign empty state rather than pretending an admin surface exists.
-              <main className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center text-sm text-gray-400">
+              <main className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center text-sm text-ink-subtle">
                 {t('adminSectionDenied')}
               </main>
             ) : (
@@ -217,17 +256,16 @@ const handleDeleteActiveChat = useCallback(async () => {
         {profileStatus === 'error' && (
           <div className="flex items-center justify-center gap-3 border-t border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
             <span>{t('profileLoadFailed')}</span>
-            <button
-              onClick={() => void loadProfile()}
-              className="rounded-full border border-amber-400 px-3 py-0.5 font-semibold hover:bg-amber-100"
-            >
+            <Button variant="secondary" size="sm" onClick={() => void loadProfile()}>
               {t('retry')}
-            </button>
+            </Button>
           </div>
         )}
 
-        {/* ONBOARDING — optional, non-blocking, location-independent */}
-        {profileStatus === 'missing' && !profileSkipped && (
+        {/* ONBOARDING — optional, non-blocking, location-independent. Never over the admin review
+            workspace: a reviewer there has no farm to describe, and the modal covered the queue
+            (found by e2e E2E-19a/b; RT-9). */}
+        {profileStatus === 'missing' && !profileSkipped && section !== 'admin' && (
           <ProfileOnboarding
             onComplete={(savedProfile) => {
               setProfile(savedProfile);

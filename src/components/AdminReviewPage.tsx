@@ -33,6 +33,7 @@ import {
   formatPercent,
   investigationCards,
   investigationFlagTextKey,
+  isHeldClaimDetail,
   queueEntryViewModel,
   validateOverride,
   type OverrideFormState,
@@ -46,6 +47,8 @@ import {
   verificationRulesKey,
 } from '../utils/claimFlow';
 import { ClaimStateBadge } from './ClaimStatusCard';
+import { AdminVerificationDiagnostics } from './AdminVerificationDiagnostics';
+import { USER_STORAGE_KEY } from '../context/AuthContext';
 import type {
   AdminActionRow,
   AdminAuditRow,
@@ -269,6 +272,7 @@ const EMPTY_FILTERS: AdminQueueFilters = {
   search: '',
   withAppeal: '',
   aiFailed: '',
+  held: '',
 };
 
 const QueueView = ({
@@ -385,6 +389,21 @@ const QueueView = ({
           <option value="true">{t('adminFilterAiStuck')}</option>
         </select>
 
+        {/* D8: claims the engine is holding for a person (?held=true). */}
+        <select
+          aria-label={t('adminFilterHeld')}
+          value={filters.held ?? ''}
+          onChange={(e) => {
+            setFilters((prev) => ({ ...prev, held: e.target.value as NonNullable<AdminQueueFilters['held']> }));
+            setPage(1);
+          }}
+          className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700 focus:border-emerald-500 focus:outline-none"
+        >
+          <option value="">{t('adminFilterHeldAny')}</option>
+          <option value="true">{t('adminFilterHeldOnly')}</option>
+          <option value="false">{t('adminFilterHeldExclude')}</option>
+        </select>
+
         <input
           aria-label={t('adminSearch')}
           value={searchDraft}
@@ -466,6 +485,15 @@ const QueueView = ({
                           </td>
                           <td className="px-3 py-2.5">
                             <div className="flex flex-wrap items-center gap-1.5">
+                              {row.held && (
+                                <span
+                                  data-testid="queue-held-signal"
+                                  className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-2xs font-semibold text-sky-800"
+                                >
+                                  <ShieldAlert className="h-3 w-3" aria-hidden="true" />
+                                  {t('adminSignalHeld')}
+                                </span>
+                              )}
                               {row.aiFailed && (
                                 <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
                                   <AlertTriangle className="h-3 w-3" />
@@ -478,7 +506,7 @@ const QueueView = ({
                                   {t('adminSignalAppeal')}
                                 </span>
                               )}
-                              {!row.hasAppeal && !row.aiFailed && (
+                              {!row.hasAppeal && !row.aiFailed && !row.held && (
                                 <span className="text-xs text-gray-400">{t('adminSignalNone')}</span>
                               )}
                             </div>
@@ -541,7 +569,7 @@ const DetailView = ({
   const [overrideOpen, setOverrideOpen] = useState(false);
   const actorSub = useMemo(() => {
     try {
-      const stored = sessionStorage.getItem('vivasayi:user');
+      const stored = sessionStorage.getItem(USER_STORAGE_KEY);
       if (!stored) return '';
       const parsed = JSON.parse(stored) as { cognitoSub?: string };
       return parsed.cognitoSub ?? '';
@@ -569,6 +597,9 @@ const DetailView = ({
     };
   }, [claimId, retryKey]);
 
+  // D8: a held claim (submitted, no decision, engine waiting for a person) may be overridden.
+  const held = isHeldClaimDetail(detail);
+
   return (
     <div className="mx-auto max-w-6xl space-y-4 px-4 py-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -582,7 +613,13 @@ const DetailView = ({
         {detail && (
           <div className="flex items-center gap-2">
             <ClaimStateBadge state={detail.state} />
-            {canOverrideFrom(detail.state) && (
+            {held && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-800">
+                <ShieldAlert className="h-3 w-3" aria-hidden="true" />
+                {t('adminSignalHeld')}
+              </span>
+            )}
+            {canOverrideFrom(detail.state, { held }) && (
               <button
                 onClick={() => setOverrideOpen(true)}
                 className="inline-flex items-center gap-1.5 rounded-full bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-600"
@@ -615,6 +652,11 @@ const DetailView = ({
       )}
       {status === 'ready' && detail && (
         <>
+          {held && (
+            <p className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900" data-testid="admin-held-note">
+              {t('adminHeldNote')}
+            </p>
+          )}
           <section className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
             <h3 className="mb-2 text-sm font-bold text-gray-800">{t('adminDetailClaimHeading')}</h3>
             <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-4">
@@ -661,6 +703,9 @@ const DetailView = ({
             <AssessmentCard detail={detail} language={language} />
           )}
 
+          {/* ADR-022 (D9): read-only; keyed so a re-read after an override reloads it too. */}
+          <AdminVerificationDiagnostics key={`${detail.id}:${retryKey}`} claimId={detail.id} language={language} />
+
           <EvidenceUrlsCard detail={detail} />
 
           <AppealsCard appeals={detail.appeals} language={language} />
@@ -675,6 +720,7 @@ const DetailView = ({
         <OverrideDialog
           claimId={detail.id}
           currentState={detail.state}
+          held={held}
           claimedAreaAcres={detail.claimedAreaAcres}
           actorSub={actorSub}
           onClose={() => setOverrideOpen(false)}
@@ -881,6 +927,7 @@ const AdminActionsCard = ({ rows, language }: { rows: AdminActionRow[]; language
 interface OverrideDialogProps {
   claimId: string;
   currentState: string;
+  held: boolean;
   claimedAreaAcres: number;
   actorSub: string;
   onClose: () => void;
@@ -890,6 +937,7 @@ interface OverrideDialogProps {
 const OverrideDialog = ({
   claimId,
   currentState,
+  held,
   claimedAreaAcres,
   actorSub,
   onClose,
@@ -908,8 +956,8 @@ const OverrideDialog = ({
   const [errorKey, setErrorKey] = useState<string | null>(null);
 
   const validation = useMemo(
-    () => validateOverride({ ...form, currentState }),
-    [form, currentState]
+    () => validateOverride({ ...form, currentState, held }),
+    [form, currentState, held]
   );
   const selfApproval = approverEqualsActor(actorSub, form.approverSub);
 

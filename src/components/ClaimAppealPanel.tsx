@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { Loader2, MessageSquareWarning } from 'lucide-react';
+import { MessageSquareWarning } from 'lucide-react';
+import { Button, SkeletonText } from './ui';
 import { ApiClientError, friendlyMessageKey } from '../api/client';
 import { getAppeal, submitAppeal } from '../api/claims';
 import { APPEAL_REASON_MAX, APPEAL_REASON_MIN, formatClaimDate } from '../utils/claimFlow';
@@ -62,10 +63,22 @@ export const ClaimAppealPanel = ({ claimId, language }: ClaimAppealPanelProps) =
     }
   };
 
-  if (status === 'loading') return null;
+  // While the appeal loads the panel keeps its place (no jump) and says it is busy.
+  if (status === 'loading') {
+    return (
+      <section
+        className="rounded-card border border-surface-border bg-white p-4 shadow-card"
+        aria-busy="true"
+        aria-label={t('appealLoading')}
+        data-testid="appeal-loading"
+      >
+        <SkeletonText lines={2} />
+      </section>
+    );
+  }
 
   return (
-    <section className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm" aria-labelledby="appeal-title">
+    <section className="rounded-card border border-surface-border bg-white p-4 shadow-card" aria-labelledby="appeal-title">
       <div className="mb-2 flex items-center gap-2">
         <MessageSquareWarning className="h-4 w-4 text-emerald-700" aria-hidden />
         <h3 id="appeal-title" className="text-sm font-bold text-gray-800">
@@ -98,12 +111,9 @@ export const ClaimAppealPanel = ({ claimId, language }: ClaimAppealPanelProps) =
       {status === 'ready' && !appeal && !formOpen && (
         <div className="space-y-2">
           <p className="text-xs text-gray-600">{t('appealIntro')}</p>
-          <button
-            onClick={() => setFormOpen(true)}
-            className="rounded-xl border border-emerald-300 bg-white px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50"
-          >
+          <Button variant="secondary" onClick={() => setFormOpen(true)}>
             {t('appealAction')}
-          </button>
+          </Button>
         </div>
       )}
 
@@ -124,21 +134,12 @@ export const ClaimAppealPanel = ({ claimId, language }: ClaimAppealPanelProps) =
             <p className="text-xs text-amber-800">{t('appealReasonTooShort', { min: APPEAL_REASON_MIN })}</p>
           )}
           <div className="flex gap-2">
-            <button
-              onClick={() => void handleSubmit()}
-              disabled={!reasonValid || submitting}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-green-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
-            >
-              {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+            <Button onClick={() => void handleSubmit()} disabled={!reasonValid} loading={submitting}>
               {t('appealSubmit')}
-            </button>
-            <button
-              onClick={() => setFormOpen(false)}
-              disabled={submitting}
-              className="rounded-xl border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-            >
+            </Button>
+            <Button variant="secondary" onClick={() => setFormOpen(false)} disabled={submitting}>
               {t('cancel')}
-            </button>
+            </Button>
           </div>
         </div>
       )}

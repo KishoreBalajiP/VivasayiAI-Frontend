@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Trash2, X, Loader2 } from 'lucide-react';
+import { Trash2, X, Loader2, Plus } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import {
@@ -10,6 +10,7 @@ import {
 } from '../api';
 import { ApiClientError, friendlyMessageKey } from '../api/client';
 import type { ChatSessionRecord } from '../types';
+import { Button } from './ui';
 
 interface Props {
   activeChatId: string | null;
@@ -187,20 +188,14 @@ export default function ChatSidebar({
           </button>
         </div>
 
-        <button
+        <Button
           onClick={handleNewChat}
-          disabled={isCreating}
-          className="flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 to-green-700 text-white py-2.5 rounded-xl font-semibold mb-3
-            hover:from-emerald-700 hover:to-green-800 transition-all shadow-sm
-            disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:from-emerald-600 disabled:hover:to-green-700"
+          loading={isCreating}
+          leadingIcon={<Plus className="h-4 w-4" />}
+          className="mb-3"
         >
-          {isCreating ? (
-            <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-          ) : (
-            <span className="text-lg leading-none">+</span>
-          )}
           {t('newChat')}
-        </button>
+        </Button>
 
         <div className="flex-1 overflow-y-auto mb-3">
           {isLoadingList && chats.length === 0 ? (

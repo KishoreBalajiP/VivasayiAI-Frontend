@@ -1,0 +1,24 @@
+{
+  // The Playwright e2e suite (e2e/**, playwright.config.ts) runs in Node through Playwright's own
+  // TypeScript loader. It is kept OUT of tsconfig.app.json, so `npm run typecheck` stays src-only and
+  // the app build never sees Node types. `npm run e2e:typecheck` checks this folder on its own;
+  // @types/node is not a dependency, so the few Node APIs used here are declared in types/node-shim.d.ts.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "types": []
+  },
+  "include": ["./**/*.ts", "../playwright.config.ts"]
+}

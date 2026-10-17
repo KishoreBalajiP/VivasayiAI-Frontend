@@ -1,60 +1,65 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { toast } from 'sonner';
+import { FileText, Loader2, Plus, RefreshCw } from 'lucide-react';
+import { ApiClientError } from '../api/client';
+import { uploadImage } from '../api';
 import {
-  ArrowLeft,
-  FileText,
-  Loader2,
-  Plus,
-  RefreshCw,
-  ShieldCheck,
-  Undo2,
-} from 'lucide-react';
-import { ApiClientError, friendlyMessageKey } from '../api/client';
-import {
+  attachOwnershipEvidence,
   createClaim,
-  getClaim,
-  getClaimVerification,
+  deleteEvidenceUpload,
   listClaims,
   listParcels,
-  resubmitClaim,
-  submitClaim,
+  submitClaimTracked,
   uploadClaimEvidence,
-  verifyClaimRequest,
-  withdrawClaim,
 } from '../api/claims';
-import {
-  canAppealClaim,
-  claimDetailViewModel,
-  claimantRelationshipLabelKey,
-  formatClaimDate,
-  pollVerificationUntilSettled,
-  resolveClaimsListState,
-} from '../utils/claimFlow';
+import { formatRoute } from '../routing/hashRoute';
+import { useHashRoute } from '../routing/useHashRoute';
+import { formatClaimDate, resolveClaimsListState } from '../utils/claimFlow';
 import { useClaimsViewport } from '../utils/claimResponsive';
 import { ClaimWizard } from './ClaimWizard';
-import { ClaimStateBadge, VerificationResultCard } from './ClaimStatusCard';
-import ClaimEvidenceGallery from './ClaimEvidenceGallery';
-import { ClaimComponentChecklist } from './ClaimComponentChecklist';
-import { ClaimOwnershipDocuments } from './ClaimOwnershipDocuments';
-import { ClaimAppealPanel } from './ClaimAppealPanel';
+import { ClaimStateBadge } from './ClaimStatusCard';
+import { ClaimTracker } from './claims/ClaimTracker';
 import { FarmProfileEditor } from './FarmProfileEditor';
 import { ManageParcels } from './ManageParcels';
-import type { FarmProfile, LossClaim, ParcelRecord, VerificationDecision } from '../types';
+import { Alert, Button, EmptyState } from './ui';
+import type { FarmProfile, LossClaim, ParcelRecord } from '../types';
+
+// Overlays opened from the claims screens. They are not routes: each remembers the route it was
+// opened on and disappears as soon as the route changes (Back, a nav click, a deep link).
+type ClaimsOverlay =
+  | { name: 'manageParcels'; autoOpenAdd?: boolean; returnToWizard?: boolean }
+  | { name: 'farmProfile'; existingProfile?: FarmProfile | null };
 
 type ClaimsSubview =
   | { name: 'list' }
   | { name: 'new' }
   | { name: 'detail'; claimId: string }
-  | { name: 'manageParcels'; autoOpenAdd?: boolean; returnToWizard?: boolean }
-  | { name: 'farmProfile'; existingProfile?: FarmProfile | null };
+  | ClaimsOverlay;
 
 export const ClaimsPage = ({ profile }: { profile: FarmProfile | null }) => {
   // profile is used via subview.existingProfile in farmProfile subview
   void profile;
   const { i18n } = useTranslation();
   const language = i18n.language === 'ta' ? 'ta' : 'en';
-  const [subview, setSubview] = useState<ClaimsSubview>({ name: 'list' });
+  // list / new / detail come from the URL hash (#/claims, #/claims/new, #/claims/:id), so browser
+  // Back/Forward, a reload and a shared link all land on the same screen.
+  const { route, navigate } = useHashRoute();
+  const routeKey = formatRoute(route);
+  const routeView: ClaimsSubview =
+    route.section !== 'claims'
+      ? { name: 'list' }
+      : route.view === 'detail'
+        ? { name: 'detail', claimId: route.claimId }
+        : { name: route.view };
+  const [overlay, setOverlay] = useState<(ClaimsOverlay & { openedOn: string }) | null>(null);
+  const subview: ClaimsSubview = overlay && overlay.openedOn === routeKey ? overlay : routeView;
+  const openOverlay = (next: ClaimsOverlay) => setOverlay({ ...next, openedOn: routeKey });
+
+  const showList = (options: { replace?: boolean } = {}) =>
+    navigate({ section: 'claims', view: 'list' }, options);
+  const showClaim = (claimId: string, options: { replace?: boolean } = {}) =>
+    navigate({ section: 'claims', view: 'detail', claimId }, options);
+
   const [parcels, setParcels] = useState<ParcelRecord[]>([]);
   const [parcelsStatus, setParcelsStatus] = useState<'loading' | 'ready' | 'error'>('ready');
   const [parcelRetryKey, setParcelRetryKey] = useState(0);
@@ -87,7 +92,7 @@ export const ClaimsPage = ({ profile }: { profile: FarmProfile | null }) => {
   // refresh the list so the wizard auto-selects the new (single) parcel and advances to step 2.
   const handleManageParcelsCreated = useCallback(() => {
     setParcelRetryKey(k => k + 1);
-    setSubview({ name: 'new' });
+    setOverlay(null);
   }, []);
 
   return (
@@ -95,8 +100,8 @@ export const ClaimsPage = ({ profile }: { profile: FarmProfile | null }) => {
       {subview.name === 'list' && (
         <ClaimsList
           language={language}
-          onOpenNew={() => setSubview({ name: 'new' })}
-          onOpenClaim={(claimId) => setSubview({ name: 'detail', claimId })}
+          onOpenNew={() => navigate({ section: 'claims', view: 'new' })}
+          onOpenClaim={(claimId) => showClaim(claimId)}
         />
       )}
       {subview.name === 'new' && (
@@ -106,25 +111,36 @@ export const ClaimsPage = ({ profile }: { profile: FarmProfile | null }) => {
           onRetryParcels={() => setParcelRetryKey((k) => k + 1)}
           onCreateClaim={createClaim}
           onUploadEvidence={uploadClaimEvidence}
-          onSubmitClaim={submitClaim}
-          onDone={(claim) => setSubview({ name: 'detail', claimId: claim.id })}
-          onCancel={() => setSubview({ name: 'list' })}
-          onManageFarm={() => setSubview({ name: 'manageParcels' })}
-          onAddFirstParcel={() => setSubview({ name: 'manageParcels', autoOpenAdd: true, returnToWizard: true })}
+          onSubmitClaim={submitClaimTracked}
+          onUploadDocumentFile={uploadImage}
+          onAttachDocument={attachOwnershipEvidence}
+          onDeleteEvidence={deleteEvidenceUpload}
+          // Replace, not push: Back from the claim page goes to the list, not into a finished wizard.
+          onDone={(claim) => showClaim(claim.id, { replace: true })}
+          onOpenClaim={(claimId) => showClaim(claimId, { replace: true })}
+          onCancel={() => showList({ replace: true })}
+          onManageFarm={() => openOverlay({ name: 'manageParcels' })}
+          onAddFirstParcel={() => openOverlay({ name: 'manageParcels', autoOpenAdd: true, returnToWizard: true })}
         />
       )}
       {subview.name === 'detail' && (
-        <ClaimDetail
+        // The claim tracker (plan B4). Keyed by claim so a new id starts a fresh polling session.
+        <ClaimTracker
+          key={subview.claimId}
           claimId={subview.claimId}
           language={language}
-          onBack={() => setSubview({ name: 'list' })}
+          onBack={() => showList({ replace: true })}
         />
       )}
       {subview.name === 'manageParcels' && (
         <ManageParcels
           autoOpenAdd={subview.autoOpenAdd}
           onParcelCreated={subview.returnToWizard ? handleManageParcelsCreated : undefined}
-          onClose={() => setSubview(subview.returnToWizard ? { name: 'new' } : { name: 'list' })}
+          onClose={() => {
+            const backToWizard = subview.returnToWizard;
+            setOverlay(null);
+            if (!backToWizard) showList({ replace: true });
+          }}
           onParcelsChange={handleParcelsChange}
         />
       )}
@@ -132,9 +148,13 @@ export const ClaimsPage = ({ profile }: { profile: FarmProfile | null }) => {
         <FarmProfileEditor
           existingProfile={subview.existingProfile ?? null}
           onComplete={() => {
-            setSubview({ name: 'list' });
+            setOverlay(null);
+            showList({ replace: true });
           }}
-          onCancel={() => setSubview({ name: 'list' })}
+          onCancel={() => {
+            setOverlay(null);
+            showList({ replace: true });
+          }}
         />
       )}
     </div>
@@ -180,8 +200,8 @@ const ClaimsList = ({ language, onOpenNew, onOpenClaim }: ClaimsListProps) => {
 
   if (listState.kind === 'loading') {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-2 text-gray-500">
-        <Loader2 className="h-8 w-8 animate-spin text-emerald-600" />
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 text-ink-muted" aria-busy="true">
+        <Loader2 aria-hidden="true" className="h-8 w-8 animate-spin text-brand-700" />
         <p className="text-sm">{t('loading')}</p>
       </div>
     );
@@ -190,41 +210,32 @@ const ClaimsList = ({ language, onOpenNew, onOpenClaim }: ClaimsListProps) => {
   return (
     <div className="mx-auto w-full max-w-4xl px-3 pb-8 pt-1 sm:px-4">
       <div className="mb-4 flex items-center justify-between gap-3">
-        <h2 className="text-lg font-bold text-gray-900 sm:text-xl">{t('myClaims')}</h2>
-        <button
-          onClick={onOpenNew}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-green-700 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:from-emerald-700 hover:to-green-800"
-        >
-          <Plus className="h-4 w-4" />
+        <h2 className="text-lg font-bold text-ink sm:text-xl">{t('myClaims')}</h2>
+        <Button onClick={onOpenNew} className="shrink-0" leadingIcon={<Plus className="h-4 w-4" />}>
           <span className="hidden sm:inline">{t('newClaimButton')}</span>
           <span className="sm:hidden">{t('newClaim')}</span>
-        </button>
+        </Button>
       </div>
 
       {listState.kind === 'error' && (
-        <div className="flex items-center justify-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          <span>{t('claimsLoadFailed')}</span>
-          <button onClick={() => setRetryKey((k) => k + 1)} className="inline-flex items-center gap-1 rounded-full border border-amber-400 px-3 py-0.5 font-semibold hover:bg-amber-100">
-            <RefreshCw className="h-3.5 w-3.5" />
-            {t('retry')}
-          </button>
-        </div>
+        <Alert
+          tone="warning"
+          title={t('claimsLoadFailed')}
+          actions={
+            <Button size="sm" variant="secondary" onClick={() => setRetryKey((k) => k + 1)} leadingIcon={<RefreshCw className="h-3.5 w-3.5" />}>
+              {t('retry')}
+            </Button>
+          }
+        />
       )}
 
       {listState.kind === 'empty' && (
-        <div className="flex flex-col items-center gap-3 py-12 text-center">
-          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500 to-green-700">
-            <FileText className="h-8 w-8 text-white" />
-          </div>
-          <h3 className="text-base font-bold text-gray-900">{t('claimsEmptyTitle')}</h3>
-          <p className="max-w-md text-sm text-gray-600">{t('claimsEmptyBody')}</p>
-          <button
-            onClick={onOpenNew}
-            className="mt-1 rounded-xl bg-gradient-to-r from-emerald-600 to-green-700 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:from-emerald-700 hover:to-green-800"
-          >
-            {t('newClaimButton')}
-          </button>
-        </div>
+        <EmptyState
+          icon={FileText}
+          title={t('claimsEmptyTitle')}
+          body={t('claimsEmptyBody')}
+          action={<Button onClick={onOpenNew}>{t('newClaimButton')}</Button>}
+        />
       )}
 
       {listState.kind === 'ready' && (
@@ -235,25 +246,25 @@ const ClaimsList = ({ language, onOpenNew, onOpenClaim }: ClaimsListProps) => {
             <li key={model.id}>
               <button
                 onClick={() => onOpenClaim(model.id)}
-                className="w-full rounded-2xl border border-gray-100 bg-white p-4 text-left shadow-sm transition hover:border-emerald-300 hover:shadow"
+                className="w-full rounded-card border border-surface-border bg-white p-4 text-left shadow-card transition hover:border-brand-300 hover:shadow"
               >
                 <div className="mb-2 flex items-start justify-between gap-2">
-                  <span className="truncate font-semibold text-gray-900">
+                  <span className="truncate font-semibold text-ink">
                     {t(model.eventTypeLabelKey)}
                   </span>
                   <ClaimStateBadge state={model.state} />
                 </div>
-                <div className="mb-1 text-sm text-gray-600">{t('claimDatesOn', { date: formatClaimDate(model.eventDate, language) })}</div>
-                <div className="mb-1 text-sm text-gray-600">
+                <div className="mb-1 text-sm text-ink-muted">{t('claimDatesOn', { date: formatClaimDate(model.eventDate, language) })}</div>
+                <div className="mb-1 text-sm text-ink-muted">
                   {t('claimedAreaLabel')}: {model.claimedAreaAcres} {t('acre')}
                 </div>
                 {!viewport.compact && (
-                  <div className="mb-1 truncate text-xs text-gray-500">
+                  <div className="mb-1 truncate text-xs text-ink-subtle">
                     {model.parcelName ?? t('parcelNameLabel')}
                     {model.crop ? ` · ${model.crop}` : ''}
                   </div>
                 )}
-                <div className="flex items-center justify-between text-xs text-gray-400">
+                <div className="flex items-center justify-between text-xs text-ink-subtle">
                   <span>{t('claimFiledOn', { date: formatClaimDate(model.createdAt, language) })}</span>
                   <span>{t('evidenceCountLabel', { count: model.evidenceCount })}</span>
                 </div>
@@ -264,366 +275,6 @@ const ClaimsList = ({ language, onOpenNew, onOpenClaim }: ClaimsListProps) => {
       )}
     </div>
   );
-};
-
-// ── Claim detail + status + actions ────────────────────────────────────────────────────
-
-interface ClaimDetailProps {
-  claimId: string;
-  language: string;
-  onBack: () => void;
-}
-
-const ClaimDetail = ({ claimId, language, onBack }: ClaimDetailProps) => {
-  const { t } = useTranslation();
-  const [claim, setClaim] = useState<LossClaim | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [notFound, setNotFound] = useState(false);
-  const [verification, setVerification] = useState<VerificationDecision | null>(null);
-  const [busy, setBusy] = useState<'submit' | 'verify' | 'withdraw' | 'resubmit' | null>(null);
-  // Bumped to (re)start the status poll; 0 = not polling.
-  const [pollRun, setPollRun] = useState(0);
-
-  const loadDetail = useCallback(async () => {
-    setLoading(true);
-    try {
-      const fetched = await getClaim(claimId);
-      setClaim(fetched);
-      setNotFound(false);
-    } catch (err) {
-      if (err instanceof ApiClientError && err.status === 401) return; // auth layer
-      if (err instanceof ApiClientError && err.status === 404) setNotFound(true);
-      else toast.error(t('claimsLoadFailed'), { duration: 4000 });
-    } finally {
-      setLoading(false);
-    }
-  }, [claimId, t]);
-
-  // Quiet refresh (no full-page spinner) for child sections that changed the claim's evidence.
-  const refreshClaim = useCallback(async () => {
-    try {
-      setClaim(await getClaim(claimId));
-    } catch {
-      // keep the current view; the next explicit action re-reads the backend
-    }
-  }, [claimId]);
-
-  useEffect(() => {
-    void loadDetail();
-  }, [loadDetail]);
-
-  // The verification may still be running (inProgress). Poll GET /claims/:id/verification —
-  // the farmer status read with its own larger rate limit, which also advances one queued step
-  // per read — every 10 s with a bounded budget (contract §3). Stops on a decision or a hold;
-  // the persisted assessment then renders, so the stale in-progress response is dropped.
-  useEffect(() => {
-    if (pollRun === 0) return undefined;
-    let cancelled = false;
-    void pollVerificationUntilSettled({
-      load: async () => (await getClaimVerification(claimId)).claim,
-      onClaim: (refreshed) => setClaim(refreshed),
-      isCancelled: () => cancelled,
-    }).then((result) => {
-      if (cancelled) return;
-      if (result.status === 'decided' || result.status === 'held') {
-        setVerification(null);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [pollRun, claimId]);
-
-  // Recovery path for a claim that exists but never reached `submitted` (an interrupted wizard
-  // or a submit that failed after the draft was created). Without this the claim is stranded in
-  // `draft` forever, because the backend refuses to verify anything that was never submitted.
-  const runSubmit = async () => {
-    if (busy) return;
-    setBusy('submit');
-    try {
-      const submitted = await submitClaim(claimId);
-      // Never claim success on a non-submitted state — the success toast is gated on the
-      // backend's own state so a partial/unchanged transition is reported as a failure.
-      if (submitted.state === 'submitted') {
-        toast.success(t('claimSubmittedToast'), { duration: 3000 });
-      } else {
-        toast.error(t('claimsLoadFailed'), { duration: 4000 });
-      }
-      void loadDetail();
-    } catch (err) {
-      if (err instanceof ApiClientError && err.status === 401) return;
-      toast.error(t(friendlyMessageKey(err instanceof ApiClientError ? err.status : 0)), { duration: 4000 });
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const runVerification = async () => {
-    if (busy) return;
-    setBusy('verify');
-    try {
-      const decision = await verifyClaimRequest(claimId);
-      setVerification(decision);
-      if (decision.held) {
-        // No decision yet: a required part of the claim is unresolved. The claim stays
-        // `submitted` (withdrawable) and the checklist shows what is waiting. Polling cannot
-        // resolve a hold — a reviewer or the farmer has to act — so none is started.
-        toast.info(t('verificationHeldToast'), { duration: 4000 });
-      } else if (decision.inProgress || decision.outcome === null) {
-        // Backend is still processing the decision — poll its status read for it.
-        setPollRun((n) => n + 1);
-        toast.info(t('verificationRunning'), { duration: 3000 });
-      } else {
-        toast.success(t('verificationDone'), { duration: 3000 });
-      }
-      void loadDetail();
-    } catch (err) {
-      if (err instanceof ApiClientError && err.status === 401) return;
-      // AI-503 root cause fix: a sanitized 5xx from /verify is most often the bounded AI
-      // timeout or a provider failure. Surface a recoverable, AI-specific message so the
-      // farmer knows the claim is still saved and can retry; never fall back to the generic
-      // `serverError` for a recoverable provider failure.
-      const status = err instanceof ApiClientError ? err.status : 0;
-      const key = status >= 500 ? 'verificationAiUnavailable' : friendlyMessageKey(status);
-      toast.error(t(key), { duration: 4000 });
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const runWithdraw = async () => {
-    if (busy) return;
-    if (!window.confirm(t('withdrawConfirmBody'))) return;
-    setBusy('withdraw');
-    try {
-      await withdrawClaim(claimId);
-      toast.success(t('withdrawToast'), { duration: 3000 });
-      setVerification(null);
-      void loadDetail();
-    } catch (err) {
-      if (err instanceof ApiClientError && err.status === 401) return;
-      toast.error(t(friendlyMessageKey(err instanceof ApiClientError ? err.status : 0)), { duration: 4000 });
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const runResubmit = async () => {
-    if (busy) return;
-    if (!window.confirm(t('resubmitConfirmBody'))) return;
-    setBusy('resubmit');
-    try {
-      await resubmitClaim(claimId);
-      toast.success(t('resubmitToast'), { duration: 3000 });
-      setVerification(null);
-      void loadDetail();
-    } catch (err) {
-      if (err instanceof ApiClientError && err.status === 401) return;
-      toast.error(t(friendlyMessageKey(err instanceof ApiClientError ? err.status : 0)), { duration: 4000 });
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const model = claimDetailViewModel(claim, verification);
-
-  return (
-    <div className="mx-auto w-full max-w-2xl px-3 pb-8 pt-1 sm:px-4">
-      <div className="mb-3 flex items-center gap-3">
-        <button onClick={onBack} aria-label={t('backToClaims')} className="rounded-xl border border-gray-300 p-2 text-gray-700 hover:bg-gray-50">
-          <ArrowLeft className="h-4 w-4" />
-        </button>
-        <h2 className="truncate text-lg font-bold text-gray-900 sm:text-xl">{t('claimDetailsTitle')}</h2>
-      </div>
-
-      {loading && (
-        <div className="flex flex-col items-center gap-2 py-12 text-gray-500">
-          <Loader2 className="h-8 w-8 animate-spin text-emerald-600" />
-          <p className="text-sm">{t('loading')}</p>
-        </div>
-      )}
-
-      {!loading && notFound && (
-        <div className="flex flex-col items-center gap-3 py-12 text-center">
-          <p className="text-sm text-red-700">{t('claimNotFound')}</p>
-          <button onClick={onBack} className="rounded-full border border-gray-300 px-4 py-1.5 text-sm font-semibold text-gray-700 hover:bg-gray-50">
-            {t('backToClaims')}
-          </button>
-        </div>
-      )}
-
-      {!loading && !notFound && claim && (
-        <div className="space-y-3">
-          {/* Status card */}
-          <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <ClaimStateBadge state={model.state} />
-              <span className="text-xs text-gray-400">{t('claimReference')}: {model.id.slice(-8).toUpperCase()}</span>
-            </div>
-            <dl className="space-y-2 text-sm">
-              <Row label={t('reviewParcel')} value={model.parcelName ?? t('parcelNameLabel')} />
-              {model.crop && <Row label={t('parcelCropLabel')} value={model.crop} />}
-              <Row label={t('parcelAreaLabel')} value={`${model.parcelAreaAcres} ${t('acre')}`} />
-              <Row label={t('reviewEvent')} value={t(model.eventTypeLabelKey)} />
-              <Row label={t('reviewDate')} value={formatClaimDate(model.eventDate, language)} />
-              <Row label={t('claimedAreaLabel')} value={`${model.claimedAreaAcres} ${t('acre')}`} />
-              {claim.claimantRelationship && (
-                <Row
-                  label={t('claimantRelationshipLabel')}
-                  value={t(claimantRelationshipLabelKey(claim.claimantRelationship))}
-                />
-              )}
-              <Row label={t('claimFiledOnLabel')} value={formatClaimDate(model.createdAt, language)} />
-            </dl>
-            {model.state === 'draft' && <p className="mt-3 text-xs text-gray-500">{t('draftHint')}</p>}
-            {model.state === 'more_evidence_required' && (
-              <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                {t('moreEvidenceHint')}
-              </p>
-            )}
-          </div>
-
-          {/* Verification result (only backend-decided outcomes) */}
-          {model.report.kind === 'none' && model.hasResult && claim.assessment && (
-            <VerificationResultInline claim={claim} />
-          )}
-          {model.report.kind === 'held' && <ClaimComponentChecklist rows={model.report.checklist} />}
-          {model.report.kind === 'decision' && (
-            <VerificationResultCard verification={model.report.verification} language={language} />
-          )}
-          {model.report.kind === 'processing' && (
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-              <div className="flex items-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                {t('processingResultNote')}
-              </div>
-            </div>
-          )}
-          {model.report.kind === 'none' && !model.hasResult && (model.state === 'submitted' || model.state === 'more_evidence_required') && (
-            <div className="rounded-2xl border border-gray-100 bg-white p-4 text-sm text-gray-500 shadow-sm">
-              {t('noDecisionYet')}
-            </div>
-          )}
-
-          {/* Evidence gallery */}
-          <ClaimEvidenceGallery
-            claimId={claimId}
-            evidence={model.evidence}
-            canEdit={model.canEditEvidence}
-            onChanged={() => void loadDetail()}
-          />
-          {!model.canEditEvidence && (
-            <p className="px-1 text-xs text-gray-500">{t('evidenceBlockedHint')}</p>
-          )}
-
-          {/* Land ownership documents (manual review; never an official verification) */}
-          <ClaimOwnershipDocuments
-            claimId={claimId}
-            relationship={claim.claimantRelationship ?? null}
-            canAttach={model.state !== 'withdrawn'}
-            language={language}
-            onChanged={() => void refreshClaim()}
-          />
-
-          {/* Farmer appeal — only for decisions the backend allows to be appealed */}
-          {canAppealClaim(model.state) && <ClaimAppealPanel claimId={claimId} language={language} />}
-
-          {/* Farmer actions (backend-authoritative affordances) */}
-          <div className="flex flex-wrap gap-2">
-            {model.canSubmit && (
-              <button
-                onClick={() => void runSubmit()}
-                disabled={busy !== null}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-green-700 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:from-emerald-700 hover:to-green-800 disabled:opacity-60"
-              >
-                {busy === 'submit' ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
-                {t('submitClaim')}
-              </button>
-            )}
-            {model.canVerify && (
-              <button
-                onClick={() => void runVerification()}
-                disabled={busy !== null}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-green-700 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:from-emerald-700 hover:to-green-800 disabled:opacity-60"
-              >
-                {busy === 'verify' ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-                {t('verifyClaim')}
-              </button>
-            )}
-            {model.canResubmit && (
-              <button
-                onClick={() => void runResubmit()}
-                disabled={busy !== null}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-white px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
-              >
-                {busy === 'resubmit' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Undo2 className="h-4 w-4" />}
-                {t('resubmitClaim')}
-              </button>
-            )}
-            {model.canWithdraw && (
-              <button
-                onClick={() => void runWithdraw()}
-                disabled={busy !== null}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
-              >
-                {busy === 'withdraw' ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                {t('withdrawClaim')}
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-const Row = ({ label, value }: { label: string; value: string }) => (
-  <div className="flex justify-between gap-3">
-    <dt className="text-gray-500">{label}</dt>
-    <dd className="text-right font-semibold text-gray-900">{value}</dd>
-  </div>
-);
-
-// Renders a persisted assessment directly from GET /claims/:id (the list never carries one).
-// Area numbers come from the claim itself (server-measured claimedAreaAcres and the frozen
-// parcel snapshot), never placeholders.
-const VerificationResultInline = ({ claim }: { claim: LossClaim }) => {
-  const { i18n } = useTranslation();
-  const assessment = claim.assessment;
-  if (!assessment || !assessment.state) return null;
-  const decision: VerificationDecision = {
-    claimId: claim.id,
-    idempotent: true,
-    inProgress: false,
-    claimState: claim.state,
-    outcome: assessment.state,
-    decision: assessment.state,
-    reason: assessment.reason,
-    rules: assessment.rules,
-    approvedGeometry: assessment.approvedGeometry,
-    approvedAreaAcres: assessment.approvedAreaAcres,
-    weatherCorrelation: assessment.weatherCorrelation,
-    decidedAt: assessment.decidedAt,
-    decidedBy: assessment.decidedBy,
-    claimedAreaAcres: claim.claimedAreaAcres,
-    parcelAreaAcres: claim.parcelSnapshot?.parcelAreaAcres ?? null,
-    evidenceVersion: null,
-    engineVersion: null,
-    // E9-S9 (Phase 9) additive surface — copied verbatim from the persisted assessment.
-    verifiedAreaAcres: assessment.verifiedAreaAcres ?? null,
-    remainingEligible: assessment.remainingEligible ?? null,
-    previouslyVerifiedAcres: assessment.previouslyVerifiedAcres ?? null,
-    inFlightAreaAcres: assessment.inFlightAreaAcres ?? null,
-    overlapWarnings: assessment.overlapWarnings ?? [],
-    spatialEvaluated: assessment.spatialEvaluated ?? false,
-    // ADR-020 additive surface.
-    held: assessment.held ?? false,
-    pendingComponents: assessment.pendingComponents ?? [],
-    components: assessment.components ?? null,
-    policyId: assessment.policyId,
-    policyHash: assessment.policyHash ?? null,
-  };
-  return <VerificationResultCard verification={decision} language={i18n.language === 'ta' ? 'ta' : 'en'} />;
 };
 
 export default ClaimsPage;

@@ -17,6 +17,7 @@ import { sendChatMessage, getChatSession, runImageTurn, listParcels } from '../a
 import type { ChatResult } from '../api';
 import { ApiClientError, friendlyMessageKey } from '../api/client';
 import VoiceRecorder from './VoiceRecorder';
+import { Button } from './ui';
 import { validateImageFile } from '../utils/imageValidation';
 
 interface Props {
@@ -551,19 +552,16 @@ export const ChatInterface = ({
               className="min-w-0 flex-1 bg-transparent px-1 py-2 text-[15px] leading-relaxed text-gray-800 outline-none placeholder:text-gray-400 sm:text-base"
             />
 
-            <button
+            <Button
+              size="icon"
               onClick={handleSend}
-              disabled={isProcessing || !canSend}
+              disabled={!canSend}
+              loading={isProcessing}
               aria-label={t('send')}
               title={t('send')}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-r from-emerald-600 to-green-700 text-white shadow-sm transition-all hover:from-emerald-700 hover:to-green-800 disabled:cursor-not-allowed disabled:from-gray-300 disabled:to-gray-300"
             >
-              {isProcessing ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
-              ) : (
-                <Send className="h-5 w-5" />
-              )}
-            </button>
+              <Send aria-hidden="true" className="h-5 w-5" />
+            </Button>
           </div>
         </div>
       </footer>

@@ -21,3 +21,8 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# Playwright e2e (playwright.config.ts): artifacts, reports, the harness out file (it holds the
+# control token), and the network-violation dump.
+test-results/
+playwright-report/
