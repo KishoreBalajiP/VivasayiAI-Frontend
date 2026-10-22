@@ -153,10 +153,10 @@ const handleDeleteActiveChat = useCallback(async () => {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-emerald-50 to-white">
+      <div className="flex min-h-screen items-center justify-center bg-surface-muted">
         <div className="text-center">
-          <Loader2 className="mx-auto mb-4 h-14 w-14 animate-spin text-emerald-600" />
-          <p className="text-lg text-gray-600">{t('loading')}</p>
+          <Loader2 className="mx-auto mb-4 h-14 w-14 animate-spin text-brand-700" />
+          <p className="text-lg text-ink-muted">{t('loading')}</p>
         </div>
       </div>
     );
@@ -188,7 +188,7 @@ const handleDeleteActiveChat = useCallback(async () => {
   // weather strip or the parcel map's "My location" control.
   return (
     <LocationProvider autoRequest={false}>
-      <div className="flex h-dvh flex-col overflow-hidden bg-gray-50">
+      <div className="flex h-dvh flex-col overflow-hidden bg-surface-muted">
         {/* NAVBAR — always fully visible (in-flow, first child, everything below is min-h-0) */}
         <Navbar
           hasProfile={hasProfile}
@@ -254,7 +254,7 @@ const handleDeleteActiveChat = useCallback(async () => {
 
         {/* PROFILE ERROR / RETRY (non-fatal; the shell stays fully usable) */}
         {profileStatus === 'error' && (
-          <div className="flex items-center justify-center gap-3 border-t border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
+          <div className="flex items-center justify-center gap-3 border-t border-warning-border bg-warning-bg px-4 py-2 text-sm text-warning-fg">
             <span>{t('profileLoadFailed')}</span>
             <Button variant="secondary" size="sm" onClick={() => void loadProfile()}>
               {t('retry')}

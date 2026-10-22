@@ -5,7 +5,7 @@ import '../i18n';
 import i18n from '../i18n';
 import { LocationContext, type LocationContextValue } from '../context/LocationContext';
 import { createMemoryStorage } from '../test/memoryStorage';
-import { WEATHER_SOURCE_KEY } from '../hooks/useWeatherSource';
+import { WEATHER_EXPANDED_KEY, WEATHER_SOURCE_KEY } from '../hooks/useWeatherSource';
 import type { FarmProfile, WeatherResponse } from '../types';
 
 const getWeather = vi.fn();
@@ -102,7 +102,36 @@ describe('WeatherPanel', () => {
     expect(note).not.toHaveTextContent(/claim/i);
     await waitFor(() => expect(getWeather).toHaveBeenCalledWith('Chennai'));
     expect(getWeather).not.toHaveBeenCalledWith(expect.stringMatching(/Andhra/));
-    expect(screen.getByText('Weather for your farm district: Chennai')).toBeInTheDocument();
+    // UX-08: the note itself names the active farm district — no second, duplicated location line.
+    expect(note).toHaveTextContent('Weather is currently shown for your farm district, Chennai.');
+    expect(screen.queryByText('Weather for your farm district: Chennai')).not.toBeInTheDocument();
+  });
+
+  it('UX-08: the device-failure note is one line naming both the situation and the farm district', async () => {
+    localStorage.setItem(WEATHER_SOURCE_KEY, 'device');
+    renderPanel(locationValue({ status: 'outside-tn', stateName: 'Andhra Pradesh', coords: { lat: 13.6, lon: 79.9 } }));
+    const note = await screen.findByTestId('weather-device-note');
+    expect(note).toHaveTextContent('Your device appears to be in Andhra Pradesh, outside Tamil Nadu.');
+    expect(note).toHaveTextContent('Weather is currently shown for your farm district, Chennai.');
+    expect(screen.queryByText(/^Weather for your farm district:/)).not.toBeInTheDocument();
+    // The controls stay reachable, and the copy never implies the device is the farm.
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Use farm location (Chennai)' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Use my current location' })).not.toBeInTheDocument();
+  });
+
+  it('UX-08: denied and unavailable notes also name the active farm district', async () => {
+    localStorage.setItem(WEATHER_SOURCE_KEY, 'device');
+    const { unmount } = renderPanel(locationValue({ status: 'denied', errorKey: 'permission' }));
+    expect(await screen.findByTestId('weather-device-note')).toHaveTextContent(
+      'Location permission was not given. Weather is currently shown for your farm district, Chennai.'
+    );
+    unmount();
+
+    renderPanel(locationValue({ status: 'unavailable' }));
+    expect(await screen.findByTestId('weather-device-note')).toHaveTextContent(
+      'Your device location is not available right now. Weather is currently shown for your farm district, Chennai.'
+    );
   });
 
   it('LOC-12: no device message mentions claims, in English or Tamil', async () => {
@@ -130,5 +159,38 @@ describe('WeatherPanel', () => {
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Set farm district' })).toBeInTheDocument();
     expect(getWeather).not.toHaveBeenCalled();
+  });
+
+  it('UX-03: the strip folds away and remembers the choice; the detail rows are hidden, not removed', async () => {
+    const user = userEvent.setup();
+    renderPanel(locationValue());
+    const toggle = await screen.findByTestId('weather-toggle');
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(toggle).toHaveAttribute('aria-controls', 'weather-details');
+    expect(toggle).toHaveAccessibleName('Hide weather details');
+    expect(screen.getByTestId('weather-panel')).toHaveAttribute('data-weather-expanded', 'true');
+    expect(await screen.findByText('31°C')).toBeInTheDocument();
+    expect(document.getElementById('weather-details')).not.toHaveAttribute('hidden');
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).toHaveAccessibleName('Show weather details');
+    expect(screen.getByTestId('weather-panel')).toHaveAttribute('data-weather-expanded', 'false');
+    expect(document.getElementById('weather-details')).toHaveAttribute('hidden');
+    expect(screen.getByText('31°C')).toBeInTheDocument();
+    expect(localStorage.getItem(WEATHER_EXPANDED_KEY)).toBe('collapsed');
+
+    await user.click(toggle);
+    expect(localStorage.getItem(WEATHER_EXPANDED_KEY)).toBe('expanded');
+    expect(document.getElementById('weather-details')).not.toHaveAttribute('hidden');
+  });
+
+  it('UX-03: a collapsed strip stays collapsed next visit and still shows the source and its controls', async () => {
+    localStorage.setItem(WEATHER_EXPANDED_KEY, 'collapsed');
+    renderPanel(locationValue());
+    expect(await screen.findByText('Weather for your farm district: Chennai')).toBeInTheDocument();
+    expect(screen.getByTestId('weather-panel')).toHaveAttribute('data-weather-expanded', 'false');
+    expect(document.getElementById('weather-details')).toHaveAttribute('hidden');
+    expect(screen.getByRole('button', { name: 'Use my current location' })).toBeInTheDocument();
   });
 });

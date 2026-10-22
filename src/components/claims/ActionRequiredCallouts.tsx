@@ -78,7 +78,7 @@ export const ActionRequiredCallouts = ({
   };
 
   return (
-    <section aria-labelledby={titleId} className="mb-3 space-y-2">
+    <section aria-labelledby={titleId} className="space-y-2">
       <h3 id={titleId} className="text-sm font-semibold text-ink">
         {t('trackerActionsTitle')}
       </h3>

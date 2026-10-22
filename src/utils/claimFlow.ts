@@ -188,6 +188,21 @@ export const showsVerificationResult = (state: string): boolean =>
   state !== 'processing' &&
   state !== 'withdrawn';
 
+// ── Claims-list next-step hint (audit D4) ───────────────────────────────────────────────
+// One short, actionable line for the claims-list card, derived ONLY from state gates the
+// existing workflow already enforces (each mirrors backend/claimState.service.js and is used by
+// the tracker/wizard). Returns the i18n key of the hint, or null when the state has no
+// farmer-actionable next step — in which case the card renders no hint at all. Nothing here
+// decides or invents a status: the deep link always opens the claim detail where the real,
+// permission-checked action lives. `appeal` precedes the others because canAppealClaim includes
+// more_evidence_required, whose primary step is still the resubmit.
+export const claimNextStepKey = (state: string): string | null => {
+  if (canResubmitClaim(state)) return 'nextStep_resubmit';
+  if (canSubmitClaim(state)) return 'nextStep_submit';
+  if (canAppealClaim(state)) return 'nextStep_appeal';
+  return null;
+};
+
 // ── i18n key helpers (labels live in the translation layer, never hard-coded here) ──────
 
 export const claimStateLabelKey = (state: string): string => `claimState_${state}`;

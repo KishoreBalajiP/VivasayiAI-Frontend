@@ -50,7 +50,7 @@ export const MessageBubble = ({ message, onRequestDelete }: MessageBubbleProps) 
             ? // Flat brand-700 token (white 5.5:1, the brand-100 timestamp 4.8:1); the copied
               // gradient started at emerald-600, where white text was only ~3.8:1.
               'rounded-tr-md bg-brand-700 text-white'
-            : 'rounded-tl-md border border-gray-100 bg-white text-gray-800'
+            : 'rounded-tl-md border border-surface-sunken bg-surface text-ink'
         }`}
       >
         {/* FRONTEND IMAGE PREVIEW (before backend process) */}
@@ -84,7 +84,7 @@ export const MessageBubble = ({ message, onRequestDelete }: MessageBubbleProps) 
         {/* KNOWLEDGE SOURCES (text answers): file names the backend grounded the answer in.
             Names only — the backend never returns chunk text or storage paths. */}
         {!isUser && message.sources && message.sources.length > 0 && (
-          <div className="mt-2 border-t border-gray-100 pt-1.5 text-xs text-ink-subtle" data-testid="chat-sources">
+          <div className="mt-2 border-t border-surface-sunken pt-1.5 text-xs text-ink-subtle" data-testid="chat-sources">
             <span className="font-semibold">{t('chatSourcesLabel')}: </span>
             {uniqueSourceNames(message.sources).join(', ')}
           </div>
@@ -123,7 +123,7 @@ export const MessageBubble = ({ message, onRequestDelete }: MessageBubbleProps) 
                 aria-label={t('closeMenu')}
                 onClick={() => setMenuOpen(false)}
               />
-              <div className="absolute right-0 top-9 z-50 w-44 overflow-hidden rounded-xl border border-gray-100 bg-white py-1 shadow-xl">
+              <div className="absolute right-0 top-9 z-50 w-44 overflow-hidden rounded-xl border border-surface-sunken bg-surface py-1 shadow-xl">
                 <button
                   type="button"
                   onClick={() => {

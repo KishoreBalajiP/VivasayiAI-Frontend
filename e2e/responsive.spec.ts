@@ -2,40 +2,15 @@
 // desktop-chromium (1440x900) and mobile-chromium (Pixel 7). No horizontal overflow, every stage
 // visible, every header control has an accessible name, and the keyboard focus ring is visible on
 // the dark header (white outline, critique: brand-700 would be ~1.8:1 on brand-900).
+// E2E-21b (same file) covers UX-03: the weather strip folds away and re-expands without overflow.
+// E2E-21c (same file) covers UX-09 (the header fits 360/390/412 with no clipped control and every
+// control keeps an accessible name) and D1 (the header/weather containers are full-bleed and share
+// the workspace's axis, while the chat column keeps a readable fixed max width).
 
-import type { Page } from '@playwright/test';
 import { expect, screenshot, test } from './fixtures';
 import { ClaimTrackerPage, STAGE_IDS } from './pages/ClaimTrackerPage';
 import { ClaimWizardPage } from './pages/ClaimWizardPage';
-
-/** Elements that stick out of the viewport horizontally (ignoring clipped and screen-reader-only ones). */
-const horizontalOverflow = (page: Page) =>
-  page.evaluate(() => {
-    const width = window.innerWidth;
-    const offenders: string[] = [];
-    if (document.documentElement.scrollWidth > width) offenders.push(`document scrollWidth ${document.documentElement.scrollWidth} > ${width}`);
-    const clippedByAncestor = (element: Element) => {
-      for (let node = element.parentElement; node; node = node.parentElement) {
-        const style = getComputedStyle(node);
-        if (['auto', 'scroll', 'hidden', 'clip'].includes(style.overflowX) && node !== document.body && node !== document.documentElement) {
-          const rect = node.getBoundingClientRect();
-          if (rect.right <= width + 1) return true;
-        }
-      }
-      return false;
-    };
-    for (const element of Array.from(document.querySelectorAll('body *'))) {
-      const rect = element.getBoundingClientRect();
-      if (rect.width === 0 || rect.height === 0) continue;
-      const style = getComputedStyle(element);
-      if (style.position === 'fixed' || style.visibility === 'hidden') continue;
-      if (rect.width <= 1 && rect.height <= 1) continue; // sr-only
-      if (rect.right > width + 1 && !clippedByAncestor(element)) {
-        offenders.push(`${element.tagName.toLowerCase()}${element.getAttribute('data-testid') ? `[data-testid=${element.getAttribute('data-testid')}]` : ''} right=${Math.round(rect.right)}`);
-      }
-    }
-    return offenders.slice(0, 20);
-  });
+import { horizontalOverflow } from './lib/layout';
 
 test('E2E-21: the tracker, list and wizard fit the screen, stages are visible, header controls are named and the focus ring shows on the dark header', async ({ farmerPage: page, harness, farmer }, testInfo) => {
   await harness.scenario({ id: 'S13' });
@@ -105,4 +80,88 @@ test('E2E-21: the tracker, list and wizard fit the screen, stages are visible, h
   expect(await horizontalOverflow(page), 'wizard: elements beyond the viewport').toEqual([]);
   await expect(wizard.continueButton).toBeInViewport();
   await screenshot(page, testInfo, `E2E-21-wizard-${project}`);
+});
+
+// UX-03: the farm-first weather strip can be folded away (and re-expanded) so it cannot eat the
+// chat area on a phone. The source line and its controls stay available while folded, and folding
+// never introduces horizontal overflow.
+test('E2E-21b: the weather strip folds away and re-expands without horizontal overflow', async ({ farmerPage: page }, testInfo) => {
+  await page.goto('/#/chat');
+  const panel = page.getByTestId('weather-panel');
+  await expect(panel).toBeVisible();
+
+  const toggle = page.getByTestId('weather-toggle');
+  await expect(toggle).toBeVisible();
+  await expect(toggle).toHaveAccessibleName(/\S/);
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(panel).toHaveAttribute('data-weather-expanded', 'true');
+
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(panel).toHaveAttribute('data-weather-expanded', 'false');
+  await expect(page.getByRole('button', { name: /Use my current location|Use farm district/ })).toBeVisible();
+  expect(await horizontalOverflow(page), 'folded weather strip: elements beyond the viewport').toEqual([]);
+  await screenshot(page, testInfo, `E2E-21b-weather-folded-${testInfo.project.name}`);
+
+  await toggle.click();
+  await expect(panel).toHaveAttribute('data-weather-expanded', 'true');
+});
+
+// UX-09: at the narrowest phones the header must not clip a control or wrap to a second row.
+// Brand wordmark, farm-chip label and nav labels collapse to sr-only below 640px (their icon
+// remains, the accessible name stays). D1: the app shell is full-bleed, so the header and weather
+// containers span the workspace width instead of floating centred, and the chat column keeps its
+// readable max width.
+test('E2E-21c: UX-09 header fits 360/390/412 with no clipped controls, and D1 the shell is full-bleed', async ({ farmerPage: page }, testInfo) => {
+  await page.goto('/#/chat');
+  await expect(page.getByTestId('chat-surface')).toBeVisible();
+
+  for (const width of [360, 390, 412]) {
+    await page.setViewportSize({ width, height: 800 });
+    await expect(page.getByTestId('chat-surface')).toBeVisible();
+    expect(await horizontalOverflow(page), `page overflow at ${width}`).toEqual([]);
+
+    const header = page.locator('header[data-surface="dark"]');
+    const metrics = await header.evaluate((el) => {
+      const inner = el.firstElementChild as HTMLElement;
+      const box = (b: Element) => {
+        const r = b.getBoundingClientRect();
+        return { name: b.getAttribute('aria-label') ?? b.textContent?.trim() ?? '', x: r.x, right: r.right, w: r.width };
+      };
+      return {
+        headerScrollW: el.scrollWidth,
+        headerClientW: el.clientWidth,
+        rowHeight: el.getBoundingClientRect().height,
+        buttons: Array.from(inner.querySelectorAll('button')).map(box),
+      };
+    });
+    expect(metrics.headerScrollW, `header does not scroll horizontally at ${width}`).toBeLessThanOrEqual(metrics.headerClientW + 1);
+    expect(metrics.rowHeight, `header stays a single row at ${width}`).toBeLessThanOrEqual(64);
+    for (const button of metrics.buttons) {
+      expect(button.name, `"${button.name}" keeps an accessible name at ${width}`).toMatch(/\S/);
+      expect(button.w, `"${button.name}" is not collapsed at ${width}`).toBeGreaterThan(0);
+      expect(button.x, `"${button.name}" is inside the left edge at ${width}`).toBeGreaterThanOrEqual(-0.5);
+      expect(button.right, `"${button.name}" is inside the right edge at ${width}`).toBeLessThanOrEqual(width + 0.5);
+    }
+    await screenshot(page, testInfo, `E2E-21c-header-${width}-${testInfo.project.name}`);
+  }
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(page.getByTestId('chat-surface')).toBeVisible();
+  const gutters = await page.evaluate(() => {
+    const box = (el: Element | null) => {
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: Math.round(r.x), right: Math.round(r.right), w: Math.round(r.width) };
+    };
+    return {
+      headerInner: box(document.querySelector('header[data-surface="dark"]')?.firstElementChild ?? null),
+      weatherInner: box(document.querySelector('[data-testid="weather-panel"] > div')),
+      chatColumn: box(document.querySelector('[data-testid="chat-column"]')),
+    };
+  });
+  expect(gutters.headerInner, 'header container').toMatchObject({ x: 0, w: 1440 });
+  expect(gutters.weatherInner, 'weather container').toEqual({ x: 0, right: 1440, w: 1440 });
+  expect(gutters.chatColumn?.w ?? 0, 'chat column keeps a readable max width').toBeLessThanOrEqual(800);
+  await screenshot(page, testInfo, `E2E-21c-shell-${testInfo.project.name}`);
 });

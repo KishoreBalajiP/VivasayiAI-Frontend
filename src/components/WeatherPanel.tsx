@@ -4,9 +4,9 @@ import { ApiClientError, friendlyMessageKey } from '../api/client';
 import { getWeather } from '../api';
 import type { FarmProfile, WeatherResponse } from '../types';
 import { useLocation } from '../context/LocationContext';
-import { useWeatherSource } from '../hooks/useWeatherSource';
+import { useWeatherExpanded, useWeatherSource } from '../hooks/useWeatherSource';
 import { Button, Skeleton } from './ui';
-import { MapPin, Loader2, Leaf, CloudSun, Crosshair, Info, Umbrella } from 'lucide-react';
+import { MapPin, Loader2, Leaf, CloudSun, ChevronUp, Crosshair, Info, Umbrella } from 'lucide-react';
 
 interface WeatherPanelProps {
   profile: FarmProfile | null;
@@ -31,6 +31,7 @@ export const WeatherPanel = ({ profile, profileUnknown = false, onOpenProfile }:
     requestLocation,
   } = useLocation();
   const [source, setSource] = useWeatherSource();
+  const [expanded, setExpanded] = useWeatherExpanded();
 
   const farmDistrict = profile?.district?.trim() || null;
 
@@ -153,20 +154,22 @@ export const WeatherPanel = ({ profile, profileUnknown = false, onOpenProfile }:
     }
 
     if (source === 'device' && locStatus !== 'idle') {
-      // outside-tn / denied / unavailable / unsupported — a weather-only explanation.
+      // outside-tn / denied / unavailable / unsupported — ONE weather-only line that names both the
+      // device situation and the active farm district (no separate "Weather for your farm district"
+      // line repeating it). The controls sit on their own row underneath.
       const message =
         locStatus === 'outside-tn'
           ? farmDistrict
             ? stateName
-              ? t('weatherDeviceOutsideTn', { state: stateName })
-              : t('weatherDeviceOutsideTnNoState')
+              ? t('weatherDeviceOutsideTn', { state: stateName, district: farmDistrict })
+              : t('weatherDeviceOutsideTnNoState', { district: farmDistrict })
             : t('weatherDeviceOutsideTnNoFarm')
           : locStatus === 'denied'
             ? farmDistrict
-              ? t('weatherDeviceDeniedFarm')
+              ? t('weatherDeviceDeniedFarm', { district: farmDistrict })
               : t('weatherDeviceDeniedNoFarm')
             : farmDistrict
-              ? t('weatherDeviceUnavailableFarm')
+              ? t('weatherDeviceUnavailableFarm', { district: farmDistrict })
               : t('weatherDeviceUnavailableNoFarm');
       return (
         <div className="flex flex-col gap-1.5">
@@ -175,7 +178,6 @@ export const WeatherPanel = ({ profile, profileUnknown = false, onOpenProfile }:
             <span>{message}</span>
           </p>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            {farmDistrict && sourceLine(t('weatherForFarm', { district: farmDistrict }))}
             <Button variant="ghost" size="sm" onClick={() => void requestLocation()}>
               {t('retry')}
             </Button>
@@ -345,16 +347,38 @@ export const WeatherPanel = ({ profile, profileUnknown = false, onOpenProfile }:
     <div
       data-testid="weather-panel"
       data-weather-source={deviceReady ? 'device' : farmDistrict ? 'farm' : 'none'}
+      data-weather-expanded={expanded ? 'true' : 'false'}
       className="shrink-0 border-b border-brand-100 bg-gradient-to-r from-brand-50 via-white to-green-50"
     >
-      <div className="mx-auto max-w-6xl px-3 py-2.5 sm:px-4 sm:py-3">
-        {renderSourceState()}
+      <div className="px-3 py-2.5 sm:px-4 sm:py-3">
+        {/* Source row + collapse control: folding the strip away is the farmer's choice and is
+            remembered, so the whole panel can shrink to one line on a small screen. */}
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">{renderSourceState()}</div>
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            aria-expanded={expanded}
+            aria-controls="weather-details"
+            aria-label={expanded ? t('weatherHideDetails') : t('weatherShowDetails')}
+            title={expanded ? t('weatherHideDetails') : t('weatherShowDetails')}
+            data-testid="weather-toggle"
+            className="shrink-0 rounded-lg p-1.5 text-ink-muted transition-colors hover:bg-brand-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+          >
+            <ChevronUp
+              aria-hidden="true"
+              className={`h-4 w-4 transition-transform ${expanded ? '' : 'rotate-180'}`}
+            />
+          </button>
+        </div>
 
-        {queryDistrict && (
-          <div className="mt-1.5 flex flex-col gap-1.5 lg:flex-row lg:items-center lg:gap-6">
-            {renderWeatherBody()}
-          </div>
-        )}
+        <div id="weather-details" hidden={!expanded}>
+          {queryDistrict && (
+            <div className="mt-1.5 flex flex-col gap-1.5 lg:flex-row lg:items-center lg:gap-6">
+              {renderWeatherBody()}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

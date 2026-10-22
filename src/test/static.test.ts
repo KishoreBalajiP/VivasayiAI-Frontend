@@ -99,8 +99,10 @@ describe('static design-system guards', () => {
     }
   });
 
-  it('UI-14: no emoji used as an icon in the weather strip', () => {
-    expect(source('/src/components/WeatherPanel.tsx')).not.toMatch(/\p{Extended_Pictographic}/u);
+  it('UI-14: no emoji used as an icon in the weather strip or the chat surfaces', () => {
+    for (const path of ['/src/components/WeatherPanel.tsx', '/src/components/ChatSidebar.tsx', '/src/components/ChatInterface.tsx']) {
+      expect(stripComments(source(path)), path).not.toMatch(/\p{Extended_Pictographic}/u);
+    }
   });
 
   it('UI-14: no source file outside the listed debt has the copy-pasted button gradient; restyled files use the 2xs token', () => {
@@ -109,9 +111,9 @@ describe('static design-system guards', () => {
       expect(GRADIENT_DEBT[path], path).toBeUndefined();
       expect(countIn(source(path), GRADIENT), path).toBe(0);
     }
-    // Chat files only had their buttons migrated in this stage, so only fully restyled files are
-    // held to the type-size rule.
-    for (const path of ['/src/App.tsx', '/src/components/Navbar.tsx', '/src/components/WeatherPanel.tsx', '/src/components/LoginScreen.tsx']) {
+    // Fully restyled files are held to the type-size rule. The chat surfaces joined this list when
+    // they moved onto the tokens and text-2xs (their only 10/11 px usages are gone).
+    for (const path of ['/src/App.tsx', '/src/components/Navbar.tsx', '/src/components/WeatherPanel.tsx', '/src/components/LoginScreen.tsx', '/src/components/ChatSidebar.tsx', '/src/components/ChatInterface.tsx']) {
       expect(source(path), path).not.toMatch(/text-\[1[01]px\]/);
     }
   });

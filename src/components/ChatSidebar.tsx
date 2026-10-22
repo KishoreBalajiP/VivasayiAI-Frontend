@@ -163,12 +163,13 @@ export default function ChatSidebar({
         />
       )}
 
-      {/* SIDEBAR — absolute inside the workspace row: slides under the navbar, never clipped */}
+      {/* SIDEBAR — absolute inside the workspace row on mobile; static, non-clipped column on desktop */}
       <aside
+        data-testid="chat-sidebar"
         className={`
           absolute lg:static top-0 left-0 z-40 h-full
           w-72 lg:w-64
-          bg-gray-50 border-r border-gray-200
+          bg-surface border-r border-surface-border
           transform transition-transform duration-300
           ${isOpen ? 'translate-x-0' : '-translate-x-full'}
           lg:translate-x-0
@@ -178,11 +179,11 @@ export default function ChatSidebar({
       >
         {/* MOBILE HEADER */}
         <div className="flex items-center justify-between lg:hidden mb-3">
-          <h2 className="font-bold text-lg text-gray-800">{t('chats')}</h2>
+          <h2 className="font-bold text-lg text-ink">{t('chats')}</h2>
           <button
             onClick={() => setIsOpen(false)}
             aria-label={t('closeSidebar')}
-            className="p-1.5 rounded-lg hover:bg-gray-200"
+            className="p-1.5 rounded-lg hover:bg-surface-muted"
           >
             <X className="w-5 h-5" />
           </button>
@@ -197,26 +198,26 @@ export default function ChatSidebar({
           {t('newChat')}
         </Button>
 
-        <div className="flex-1 overflow-y-auto mb-3">
+        <div data-testid="chat-list" className="flex-1 overflow-y-auto mb-3">
           {isLoadingList && chats.length === 0 ? (
-            <div className="flex items-center justify-center gap-2 text-gray-500 text-center py-4">
+            <div className="flex items-center justify-center gap-2 text-ink-subtle text-center py-4">
               <Loader2 className="w-4 h-4 animate-spin shrink-0" />
               <span>{t('loadingChats')}</span>
             </div>
           ) : chats.length === 0 && listError ? (
             <div className="text-center py-4">
-              <p role="alert" className="text-gray-500 mb-2">
+              <p role="alert" className="text-ink-subtle mb-2">
                 {t('chatListLoadFailed')}
               </p>
               <button
                 onClick={() => void fetchChats()}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium py-1.5 px-4 rounded-lg"
+                className="bg-brand-700 hover:bg-brand-800 text-white text-sm font-medium py-1.5 px-4 rounded-lg"
               >
                 {t('retry')}
               </button>
             </div>
           ) : chats.length === 0 ? (
-            <p className="text-gray-500 text-center py-4">
+            <p className="text-ink-subtle text-center py-4">
               {t('noChats')}
             </p>
           ) : (
@@ -229,8 +230,8 @@ export default function ChatSidebar({
                 }}
                 className={`p-3 rounded-xl mb-1.5 cursor-pointer group relative border transition-colors
                   ${activeChatId === chat._id
-                    ? 'bg-emerald-600 border-emerald-600 text-white'
-                    : 'bg-white border-gray-100 hover:bg-emerald-50 text-gray-800'}`}
+                    ? 'bg-brand-700 border-brand-700 text-white'
+                    : 'bg-surface-muted border-surface-border hover:bg-brand-50 text-ink'}`}
               >
                 <div className={`pr-6 text-sm font-medium truncate ${
                   activeChatId === chat._id ? 'text-white' : ''
@@ -242,7 +243,7 @@ export default function ChatSidebar({
                   <div
                     onClick={e => e.stopPropagation()}
                     className={`mt-1.5 flex flex-wrap items-center gap-1.5 text-xs ${
-                      activeChatId === chat._id ? 'text-emerald-100' : 'text-gray-600'
+                      activeChatId === chat._id ? 'text-brand-100' : 'text-ink-muted'
                     }`}
                   >
                     <span>{t('confirmDeleteChat')}</span>
@@ -251,8 +252,8 @@ export default function ChatSidebar({
                       disabled={deletingId !== null}
                       className={`rounded-full px-2.5 py-1 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
                         activeChatId === chat._id
-                          ? 'bg-white text-red-700 hover:bg-red-50'
-                          : 'bg-red-600 text-white hover:bg-red-700'
+                          ? 'bg-surface text-danger-fg hover:bg-danger-bg'
+                          : 'bg-danger-solid text-white hover:bg-red-800'
                       }`}
                     >
                       {deletingId === chat._id ? (
@@ -263,7 +264,7 @@ export default function ChatSidebar({
                     </button>
                     <button
                       onClick={() => setConfirmTarget(null)}
-                      className="rounded-full border border-gray-300 px-2.5 py-1 font-semibold transition-colors hover:bg-gray-50"
+                      className="rounded-full border border-surface-border px-2.5 py-1 font-semibold transition-colors hover:bg-surface-muted"
                     >
                       {t('cancel')}
                     </button>
@@ -275,7 +276,7 @@ export default function ChatSidebar({
                     className={`absolute right-2 top-1/2 -translate-y-1/2
                       opacity-0 group-hover:opacity-100 transition-opacity
                       disabled:opacity-0 disabled:cursor-not-allowed
-                      ${activeChatId === chat._id ? 'text-emerald-100 hover:text-white' : 'text-red-500'}`}
+                      ${activeChatId === chat._id ? 'text-brand-100 hover:text-white' : 'text-danger-solid'}`}
                     aria-label={t('deleteChat')}
                     title={t('deleteChat')}
                   >
@@ -288,14 +289,14 @@ export default function ChatSidebar({
         </div>
 
         {confirmTarget?.type === 'all' ? (
-          <div className="rounded-xl border border-red-200 bg-red-50 p-2.5">
-            <p className="text-xs font-semibold text-red-800">{t('confirmClearAll')}</p>
-            <p className="mt-0.5 text-[11px] text-red-700">{t('confirmClearAllHint')}</p>
+          <div className="rounded-xl border border-danger-border bg-danger-bg p-2.5">
+            <p className="text-xs font-semibold text-danger-fg">{t('confirmClearAll')}</p>
+            <p className="mt-0.5 text-2xs text-danger-solid">{t('confirmClearAllHint')}</p>
             <div className="mt-2 flex items-center gap-1.5">
               <button
                 onClick={() => void doClearAllChats()}
                 disabled={isClearing}
-                className="inline-flex items-center gap-1.5 rounded-full bg-red-600 px-3 py-1 text-xs font-semibold text-white transition-colors hover:bg-red-700 disabled:opacity-60"
+                className="inline-flex items-center gap-1.5 rounded-full bg-danger-solid px-3 py-1 text-xs font-semibold text-white transition-colors hover:bg-red-800 disabled:opacity-60"
               >
                 {isClearing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 {t('yesDelete')}
@@ -303,7 +304,7 @@ export default function ChatSidebar({
               <button
                 onClick={() => setConfirmTarget(null)}
                 disabled={isClearing}
-                className="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
+                className="rounded-full border border-surface-border bg-surface px-3 py-1 text-xs font-semibold text-ink transition-colors hover:bg-surface-muted disabled:opacity-60"
               >
                 {t('cancel')}
               </button>
@@ -316,14 +317,14 @@ export default function ChatSidebar({
             className={`py-2.5 rounded-xl font-medium transition-colors
             ${
               chats.length === 0
-                ? 'bg-gray-200 text-gray-400'
-                : 'bg-red-600 text-white hover:bg-red-700'
+                ? 'bg-surface-sunken text-ink-subtle'
+                : 'bg-danger-solid text-white hover:bg-red-800'
             } disabled:cursor-not-allowed`}
           >
             {isClearing ? (
               <Loader2 className="w-4 h-4 animate-spin inline-block align-[-2px]" />
             ) : (
-              '🗑️'
+              <Trash2 className="w-4 h-4 inline-block align-[-2px]" aria-hidden="true" />
             )}{' '}
             {t('clearAllChats')}
           </button>

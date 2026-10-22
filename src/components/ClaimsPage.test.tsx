@@ -638,3 +638,60 @@ describe('claims routing', () => {
   });
 });
 
+// UX-06 + D4: the claims list. The container matches the detail page width, the header carries
+// supporting copy, and a card shows a next-step hint ONLY for a state whose action the existing
+// workflow already supports (never for a state the farmer can only wait on).
+describe('claims list layout and next-step hints', () => {
+  const renderList = async (claims: LossClaim[]) => {
+    mockListClaims.mockResolvedValue(claims);
+    window.history.replaceState(null, '', '/#/claims');
+    render(<ClaimsPage profile={null} />);
+    return screen.findByRole('heading', { name: 'My Claims' });
+  };
+
+  it('uses the same max-w-5xl container as the claim detail page and shows supporting copy', async () => {
+    const heading = await renderList([claimFor('draft')]);
+    const container = heading.closest('div.mx-auto') as HTMLElement;
+    expect(container.className).toContain('max-w-5xl');
+    expect(container.className).not.toContain('max-w-4xl');
+    expect(screen.getByText('Every claim you have filed, with its current status.')).toBeInTheDocument();
+  });
+
+  it('shows the submit next step for a draft claim', async () => {
+    await renderList([claimFor('draft')]);
+    const hint = await screen.findByTestId('claim-next-step');
+    expect(hint).toHaveTextContent('Next step:');
+    expect(hint).toHaveTextContent('Submit this claim to start the checks');
+  });
+
+  it('shows the resubmit next step for more_evidence_required, not the appeal', async () => {
+    await renderList([claimFor('more_evidence_required')]);
+    const hint = await screen.findByTestId('claim-next-step');
+    expect(hint).toHaveTextContent('Add the requested evidence and resubmit');
+    expect(hint).not.toHaveTextContent('appeal');
+  });
+
+  it('shows the appeal next step for an appealable decision', async () => {
+    await renderList([claimFor('rejected')]);
+    expect(await screen.findByTestId('claim-next-step')).toHaveTextContent('You can appeal this decision');
+  });
+
+  it('shows no next-step hint for states with no supported farmer action', async () => {
+    await renderList([
+      claimFor('submitted', { id: 'c_sub' }),
+      claimFor('verified', { id: 'c_ver' }),
+      claimFor('withdrawn', { id: 'c_wd' }),
+    ]);
+    expect(await screen.findAllByRole('button', { name: /flood/i })).toHaveLength(3);
+    expect(screen.queryByTestId('claim-next-step')).not.toBeInTheDocument();
+  });
+
+  it('keeps the card button opening the claim detail with the hint present', async () => {
+    const user = userEvent.setup();
+    await renderList([claimFor('draft')]);
+    await screen.findByTestId('claim-next-step');
+    await user.click(screen.getByRole('button', { name: /flood/i }));
+    await waitFor(() => expect(window.location.hash).toBe('#/claims/c_1'));
+  });
+});
+

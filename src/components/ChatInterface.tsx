@@ -317,7 +317,7 @@ export const ChatInterface = ({
           ...prev,
           {
             id: `err-${Date.now()}`,
-            text: 'Server error. Please try again.',
+            text: t('serverError'),
             sender: 'ai',
             timestamp: new Date(),
           },
@@ -355,28 +355,32 @@ export const ChatInterface = ({
   const canSend = Boolean(input.trim()) || Boolean(selectedImage);
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-gray-50">
-      {/* WORKSPACE HEADER (slim: hamburger + context) */}
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 bg-white px-3 sm:px-4">
-        <button
-          onClick={onOpenSidebar}
-          aria-label={t('openSidebar')}
-          title={t('openSidebar')}
-          className="rounded-lg p-1.5 text-gray-600 hover:bg-gray-100 lg:hidden"
-        >
-          <MessageSquarePlus className="h-5 w-5" />
-        </button>
-        <div className="flex min-w-0 items-center gap-2">
-          <Sprout className="h-5 w-5 shrink-0 text-emerald-600" />
-          <h2 className="truncate text-sm font-semibold text-gray-800">
-            {activeChatId ? t('chat') : t('appTitle')}
-          </h2>
+    <div data-testid="chat-surface" className="flex h-full min-h-0 flex-col overflow-hidden bg-surface-muted">
+      {/* WORKSPACE HEADER (slim: hamburger + context). Its content shares the conversation
+          column's max-width and gutters (the same values as the message list and composer), so the
+          header, messages and composer sit on one axis instead of the header hugging the pane edge. */}
+      <header data-testid="chat-header" className="flex shrink-0 items-center border-b border-surface-border bg-surface">
+        <div data-testid="chat-header-content" className="mx-auto flex h-12 w-full max-w-3xl items-center gap-2 px-3 sm:px-4">
+          <button
+            onClick={onOpenSidebar}
+            aria-label={t('openSidebar')}
+            title={t('openSidebar')}
+            className="rounded-lg p-1.5 text-ink-muted hover:bg-surface-sunken lg:hidden"
+          >
+            <MessageSquarePlus className="h-5 w-5" />
+          </button>
+          <div className="flex min-w-0 items-center gap-2">
+            <Sprout className="h-5 w-5 shrink-0 text-brand-600" />
+            <h2 className="truncate text-sm font-semibold text-ink">
+              {activeChatId ? t('chat') : t('appTitle')}
+            </h2>
+          </div>
         </div>
       </header>
 
       {/* CHAT BODY */}
-      <main className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-3xl space-y-3 px-3 py-4 sm:px-4">
+      <main data-testid="chat-scroll" className="min-h-0 flex-1 overflow-y-auto">
+        <div data-testid="chat-column" className="mx-auto flex min-h-full max-w-3xl flex-col space-y-3 px-3 py-4 sm:px-4">
           {messages.map((m, i) => (
             <MessageBubble
               key={`${m.id}-${i}`}
@@ -386,22 +390,25 @@ export const ChatInterface = ({
           ))}
 
           {messages.length === 0 && !isLoadingHistory && !isProcessing && !historyError && (
-            <div className="flex flex-col items-center px-2 pt-10 sm:pt-16 text-center">
-              <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500 to-green-700 shadow-lg">
+            <div
+              data-testid="chat-welcome"
+              className="flex flex-1 flex-col items-center justify-center px-4 py-8 text-center"
+            >
+              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500 to-green-700 shadow-lg">
                 <Sprout className="h-8 w-8 text-white" />
               </div>
 
-              <h3 className="text-xl font-bold text-gray-800 sm:text-2xl">
+              <h3 className="text-xl font-bold tracking-tight text-ink sm:text-2xl">
                 {t(greetKey, { name: displayName })}
               </h3>
-              <p className="mt-1 text-sm text-gray-500 sm:text-base">
+              <p className="mt-1.5 text-sm text-ink-subtle sm:text-base">
                 {t('askVivasayi')}
               </p>
 
               {placeName && locStatus === 'granted' && (
                 <div
                   title={t('placeContext', { place: placeName })}
-                  className="mt-3 inline-flex max-w-full items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800"
+                  className="mt-3 inline-flex max-w-full items-center gap-1.5 rounded-full border border-brand-200 bg-brand-50 px-3 py-1 text-xs font-medium text-brand-800"
                 >
                   <MapPin className="h-3.5 w-3.5 shrink-0" />
                   <span className="truncate">
@@ -410,13 +417,16 @@ export const ChatInterface = ({
                 </div>
               )}
 
-              <div className="mt-6 flex max-w-xl flex-wrap items-center justify-center gap-2">
+              <div
+                data-testid="chat-suggestions"
+                className="mt-6 flex max-w-xl flex-wrap items-center justify-center gap-2.5"
+              >
                 {suggestionKeys.map((key) => (
                   <button
                     key={key}
                     onClick={() => setInput(t(key))}
                     disabled={isProcessing}
-                    className="rounded-full border border-gray-200 bg-white px-3.5 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition-colors hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-800"
+                    className="rounded-full border border-brand-200 bg-surface px-4 py-2 text-sm font-medium text-ink shadow-sm transition-colors hover:border-brand-400 hover:bg-brand-50 hover:text-brand-800 focus-visible:border-brand-400"
                   >
                     {t(key)}
                   </button>
@@ -426,9 +436,9 @@ export const ChatInterface = ({
           )}
 
           {isLoadingHistory && (
-            <div className="flex items-center gap-2 px-2 text-sm text-gray-500">
+            <div className="flex items-center gap-2 px-2 text-sm text-ink-subtle">
               <Loader2 className="h-4 w-4 animate-spin" />
-              <span>{t('processing')}</span>
+              <span>{t('loadingMessages')}</span>
             </div>
           )}
 
@@ -444,7 +454,7 @@ export const ChatInterface = ({
           )}
 
           {isProcessing && (
-            <div className="flex items-center gap-2 px-2 text-sm text-gray-500">
+            <div className="flex items-center gap-2 px-2 text-sm text-ink-subtle">
               <Loader2 className="h-4 w-4 animate-spin" />
               <span>
                 {sendStage === 'uploading'
@@ -461,12 +471,12 @@ export const ChatInterface = ({
       </main>
 
       {/* COMPOSER (premium single bar) */}
-      <footer className="shrink-0 border-t border-gray-200 bg-white px-3 pb-[max(0.625rem,env(safe-area-inset-bottom))] pt-2.5 sm:px-4 sm:py-3">
-        <div className="mx-auto max-w-3xl">
+      <footer className="shrink-0 border-t border-surface-border bg-surface px-3 pb-[max(0.625rem,env(safe-area-inset-bottom))] pt-2.5 sm:px-4 sm:py-3">
+        <div data-testid="chat-composer-content" className="mx-auto max-w-3xl">
           {attachError && (
             <p
               role="alert"
-              className="mb-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+              className="mb-2 rounded-xl border border-danger-border bg-danger-bg px-3 py-2 text-sm text-danger-solid"
             >
               {t(attachError)}
             </p>
@@ -485,13 +495,13 @@ export const ChatInterface = ({
                   disabled={isProcessing}
                   aria-label={t('removeImage')}
                   title={t('removeImage')}
-                  className="absolute -top-2 -right-2 flex h-6 w-6 items-center justify-center rounded-full bg-gray-900 text-sm text-white shadow hover:bg-red-600 disabled:opacity-50"
+                  className="absolute -top-2 -right-2 flex h-6 w-6 items-center justify-center rounded-full bg-ink text-sm text-white shadow hover:bg-danger-solid disabled:opacity-50"
                 >
                   <span className="leading-none">×</span>
                 </button>
               </div>
-              <div className="flex shrink-0 flex-col gap-1 pb-1 text-[11px] text-gray-500">
-                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
+              <div className="flex shrink-0 flex-col gap-1 pb-1 text-2xs text-ink-subtle">
+                <span className="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 font-semibold text-brand-700">
                   {selectedImage.detectedType ? selectedImage.detectedType.toUpperCase() : 'IMG'}
                 </span>
                 <span>
@@ -504,13 +514,13 @@ export const ChatInterface = ({
           )}
 
           {parcels.length > 1 && (
-            <label className="mb-2 flex items-center gap-2 text-xs text-gray-600">
+            <label className="mb-2 flex items-center gap-2 text-xs text-ink-muted">
               <span className="shrink-0 font-semibold">{t('chatParcelLabel')}</span>
               <select
                 value={selectedParcelId}
                 onChange={(e) => setSelectedParcelId(e.target.value)}
                 disabled={isProcessing}
-                className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-800 outline-none focus:border-emerald-400"
+                className="min-w-0 flex-1 rounded-lg border border-surface-border bg-surface px-2 py-1 text-xs text-ink outline-none focus:border-brand-400"
               >
                 <option value="">{t('chatParcelAny')}</option>
                 {parcels.map((parcel) => (
@@ -522,7 +532,7 @@ export const ChatInterface = ({
             </label>
           )}
 
-          <div className="flex items-center gap-1.5 rounded-2xl border border-gray-200 bg-white py-1 pl-1.5 pr-1.5 shadow-sm transition-shadow focus-within:border-emerald-400 focus-within:ring-2 focus-within:ring-emerald-100">
+          <div className="flex items-center gap-1.5 rounded-2xl border border-surface-border bg-surface py-1 pl-1.5 pr-1.5 shadow-sm transition-shadow focus-within:border-brand-400 focus-within:ring-2 focus-within:ring-brand-100">
             <VoiceRecorder onResult={setInput} />
 
             <button
@@ -530,7 +540,7 @@ export const ChatInterface = ({
               disabled={isProcessing}
               aria-label={t('attachImage')}
               title={t('attachImage')}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-gray-600 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-ink-muted transition-colors hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
             >
               <ImageIcon className="h-5 w-5" />
             </button>
@@ -549,7 +559,7 @@ export const ChatInterface = ({
               onKeyDown={e => e.key === 'Enter' && handleSend()}
               placeholder={t('typeMessage')}
               aria-label={t('typeMessage')}
-              className="min-w-0 flex-1 bg-transparent px-1 py-2 text-[15px] leading-relaxed text-gray-800 outline-none placeholder:text-gray-400 sm:text-base"
+              className="min-w-0 flex-1 bg-transparent px-1 py-2 text-[15px] leading-relaxed text-ink outline-none placeholder:text-ink-subtle sm:text-base"
             />
 
             <Button
@@ -581,25 +591,25 @@ export const ChatInterface = ({
             aria-modal="true"
             aria-labelledby="delete-msg-title"
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md rounded-2xl border border-gray-100 bg-white p-5 shadow-2xl sm:p-6"
+            className="w-full max-w-md rounded-2xl border border-surface-sunken bg-surface p-5 shadow-2xl sm:p-6"
           >
-            <h3 id="delete-msg-title" className="text-base font-bold text-gray-900 sm:text-lg">
+            <h3 id="delete-msg-title" className="text-base font-bold text-ink sm:text-lg">
               {t('messageDeleteUnsupportedTitle')}
             </h3>
-            <p className="mt-2 text-sm text-gray-600">{t('messageDeleteUnsupportedBody')}</p>
+            <p className="mt-2 text-sm text-ink-muted">{t('messageDeleteUnsupportedBody')}</p>
 
             <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <button
                 onClick={() => setShowDeleteDialog(false)}
                 disabled={isDeletingChat}
-                className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
+                className="rounded-xl border border-surface-border px-4 py-2 text-sm font-semibold text-ink transition-colors hover:bg-surface-muted disabled:opacity-60"
               >
                 {t('cancel')}
               </button>
               <button
                 onClick={() => void handleDeleteChat()}
                 disabled={isDeletingChat}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-red-700 disabled:opacity-60"
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-danger-solid px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-red-800 disabled:opacity-60"
               >
                 {isDeletingChat && <Loader2 className="h-4 w-4 animate-spin" />}
                 {t('deleteThisChat')}
