@@ -20,6 +20,7 @@ import {
   claimCardViewModel,
   claimDetailViewModel,
   claimEventLabelKey,
+  claimNextStepKey,
   claimStateLabelKey,
   createEmptyDraft,
   defaultDocumentCategory,
@@ -239,6 +240,21 @@ describe('state gates', () => {
       expect(showsVerificationResult(s)).toBe(true);
     for (const s of ['draft', 'submitted', 'processing', 'withdrawn'])
       expect(showsVerificationResult(s)).toBe(false);
+  });
+  // Audit D4: the claims-list next-step hint. It must be derived ONLY from the state gates above,
+  // never invent a step. A state with no farmer action returns null (card shows no hint).
+  it('claimNextStepKey maps every state to its supported action, or null', () => {
+    // draft → the recovery submit path the tracker already offers.
+    expect(claimNextStepKey('draft')).toBe('nextStep_submit');
+    // more_evidence_required → resubmit takes precedence over the appeal it also allows.
+    expect(claimNextStepKey('more_evidence_required')).toBe('nextStep_resubmit');
+    // The appealable decision states → the appeal panel the tracker already offers.
+    expect(claimNextStepKey('rejected')).toBe('nextStep_appeal');
+    expect(claimNextStepKey('out_of_limit')).toBe('nextStep_appeal');
+    expect(claimNextStepKey('duplicate_area')).toBe('nextStep_appeal');
+    // No supported next step: the farmer can only wait (or the claim is closed).
+    for (const s of ['submitted', 'processing', 'verified', 'partially_verified', 'withdrawn'])
+      expect(claimNextStepKey(s)).toBeNull();
   });
 });
 

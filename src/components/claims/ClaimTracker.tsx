@@ -16,6 +16,7 @@ import { decisionTone, legacyProgressFromClaim, parseClaimProgress } from '../..
 import {
   canAppealClaim,
   claimDetailViewModel,
+  claimEventLabelKey,
   claimStateLabelKey,
   claimantRelationshipLabelKey,
   decisionReasonKeys,
@@ -209,11 +210,18 @@ export const ClaimTracker = ({ claimId, language, onBack }: ClaimTrackerProps) =
       data-overall-status={view?.overallStatus}
       data-stale={tracker.stale ? 'true' : undefined}
     >
-      <div className="mb-3 flex items-center gap-3">
+      <div className="mb-3 flex items-start gap-3">
         <Button variant="secondary" size="icon" onClick={onBack} aria-label={t('backToClaims')}>
           <ArrowLeft aria-hidden="true" className="h-4 w-4" />
         </Button>
-        <h2 className="truncate text-lg font-bold text-ink sm:text-xl">{t('claimDetailsTitle')}</h2>
+        <div className="min-w-0">
+          <h2 className="truncate text-lg font-bold text-ink sm:text-xl">{t('claimDetailsTitle')}</h2>
+          {claim && (
+            <p className="mt-0.5 truncate text-sm text-ink-muted">
+              {t(claimEventLabelKey(claim.eventType))} · {formatClaimDate(claim.eventDate, language)}
+            </p>
+          )}
+        </div>
       </div>
 
       {notFound ? (
@@ -226,102 +234,111 @@ export const ClaimTracker = ({ claimId, language, onBack }: ClaimTrackerProps) =
           }
         />
       ) : (
-        <>
-          <TrackerHeader
-            claimId={claimId}
-            claim={claim}
-            progress={view}
-            language={language}
-            fetchedAt={tracker.fetchedAt}
-            stale={tracker.stale}
-            refreshing={tracker.refreshing}
-            offline={tracker.offline}
-            error={tracker.error}
-            onRefresh={() => void refresh()}
-          />
-
-          {!view && tracker.status === 'error' && (
-            <Alert
-              tone="danger"
-              className="mb-3"
-              data-testid="tracker-refresh-error"
-              title={t('trackerLoadFailedTitle')}
-              actions={
-                <Button size="sm" variant="secondary" onClick={tracker.restart} leadingIcon={<RefreshCw className="h-3.5 w-3.5" />}>
-                  {t('retry')}
-                </Button>
-              }
-            >
-              {t('trackerLoadFailedBody')}
-            </Alert>
-          )}
-
-          {view?.legacy && (
-            <Alert tone="info" className="mb-3">
-              {tracker.status === 'unsupported' ? t('trackerUnsupportedNote') : t('trackerLegacyNote')}
-            </Alert>
-          )}
-
-          {loading && (
-            <div aria-busy="true" className="mb-3 rounded-card border border-surface-border bg-white p-4">
-              <span className="sr-only">{t('loading')}</span>
-              <SkeletonText lines={4} />
-            </div>
-          )}
-
-          {view && (
-            <ActionRequiredCallouts
-              actions={view.actionRequired}
-              onSubmit={() => void runSubmit()}
-              submitting={busy === 'submit'}
-              submitError={submitError}
-              onAddPhotos={() => focusSection(galleryRef.current)}
-              onAddDocuments={() => focusSection(documentsRef.current)}
-              onResubmit={() => setDialog('resubmit')}
-              resubmitting={busy === 'resubmit'}
+        <div className="space-y-4">
+          {/* Summary group: the claim's current status and the checks it is going through. */}
+          <div className="space-y-3">
+            <TrackerHeader
+              claimId={claimId}
+              claim={claim}
+              progress={view}
+              language={language}
+              fetchedAt={tracker.fetchedAt}
+              stale={tracker.stale}
+              refreshing={tracker.refreshing}
+              offline={tracker.offline}
+              error={tracker.error}
+              onRefresh={() => void refresh()}
             />
-          )}
 
-          {view?.decision && (
-            <DecisionCard decision={view.decision} claimCaughtUp={claim?.state === view.decision}>
-              {verification && verification.outcome === view.decision ? (
-                <VerificationResultCard verification={verification} language={language} />
-              ) : null}
-            </DecisionCard>
-          )}
+            {!view && tracker.status === 'error' && (
+              <Alert
+                tone="danger"
+                data-testid="tracker-refresh-error"
+                title={t('trackerLoadFailedTitle')}
+                actions={
+                  <Button size="sm" variant="secondary" onClick={tracker.restart} leadingIcon={<RefreshCw className="h-3.5 w-3.5" />}>
+                    {t('retry')}
+                  </Button>
+                }
+              >
+                {t('trackerLoadFailedBody')}
+              </Alert>
+            )}
 
-          <div className="grid gap-3 lg:grid-cols-5">
-            <div className="space-y-3 lg:col-span-3">
-              {view && <ProgressStages stages={view.stages} language={language} />}
-              {claim && <ClaimFacts claim={claim} language={language} />}
-            </div>
-            <div className="space-y-3 lg:col-span-2">
-              {view?.satellite && <SatelliteCard satellite={view.satellite} language={language} />}
-              {claim && (
-                <EvidenceSummary
-                  photoCount={model.evidence.length}
-                  documentCount={documentCount}
-                  onPhotos={() => focusSection(galleryRef.current)}
-                  onDocuments={() => focusSection(documentsRef.current)}
-                  onAppeal={canAppealClaim(model.state) ? () => focusSection(appealRef.current) : undefined}
-                  onWithdraw={model.canWithdraw ? () => setDialog('withdraw') : undefined}
-                  withdrawing={busy === 'withdraw'}
-                />
-              )}
-            </div>
+            {view?.legacy && (
+              <Alert tone="info">
+                {tracker.status === 'unsupported' ? t('trackerUnsupportedNote') : t('trackerLegacyNote')}
+              </Alert>
+            )}
+
+            {loading && (
+              <div aria-busy="true" className="rounded-card border border-surface-border bg-white p-4">
+                <span className="sr-only">{t('loading')}</span>
+                <SkeletonText lines={4} />
+              </div>
+            )}
           </div>
 
-          {model.report.kind === 'held' && (
-            <details className="mt-3 rounded-card border border-surface-border bg-white" data-testid="tracker-held-details">
-              <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-ink">{t('trackerHeldDetails')}</summary>
-              <div className="px-4 pb-4">
-                <ClaimComponentChecklist rows={model.report.checklist} />
-              </div>
-            </details>
+          {/* Action group: what the farmer can do next and how the claim was decided. */}
+          {view && (
+            <div className="space-y-3">
+              <ActionRequiredCallouts
+                actions={view.actionRequired}
+                onSubmit={() => void runSubmit()}
+                submitting={busy === 'submit'}
+                submitError={submitError}
+                onAddPhotos={() => focusSection(galleryRef.current)}
+                onAddDocuments={() => focusSection(documentsRef.current)}
+                onResubmit={() => setDialog('resubmit')}
+                resubmitting={busy === 'resubmit'}
+              />
+
+              {view?.decision && (
+                <DecisionCard decision={view.decision} claimCaughtUp={claim?.state === view.decision}>
+                  {verification && verification.outcome === view.decision ? (
+                    <VerificationResultCard verification={verification} language={language} />
+                  ) : null}
+                </DecisionCard>
+              )}
+            </div>
           )}
 
+          {/* Details group: the checks, the filed facts, satellite support and the evidence summary. */}
+          <div className="space-y-3">
+            <div className="grid gap-3 lg:grid-cols-5">
+              <div className="space-y-3 lg:col-span-3">
+                {view && <ProgressStages stages={view.stages} language={language} />}
+                {claim && <ClaimFacts claim={claim} language={language} />}
+              </div>
+              <div className="space-y-3 lg:col-span-2">
+                {view?.satellite && <SatelliteCard satellite={view.satellite} language={language} />}
+                {claim && (
+                  <EvidenceSummary
+                    photoCount={model.evidence.length}
+                    documentCount={documentCount}
+                    onPhotos={() => focusSection(galleryRef.current)}
+                    onDocuments={() => focusSection(documentsRef.current)}
+                    onAppeal={canAppealClaim(model.state) ? () => focusSection(appealRef.current) : undefined}
+                    onWithdraw={model.canWithdraw ? () => setDialog('withdraw') : undefined}
+                    withdrawing={busy === 'withdraw'}
+                  />
+                )}
+              </div>
+            </div>
+
+            {model.report.kind === 'held' && (
+              <details className="rounded-card border border-surface-border bg-white" data-testid="tracker-held-details">
+                <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-ink">{t('trackerHeldDetails')}</summary>
+                <div className="px-4 pb-4">
+                  <ClaimComponentChecklist rows={model.report.checklist} />
+                </div>
+              </details>
+            )}
+          </div>
+
+          {/* Evidence group: photos, land documents and the farmer's appeal when one is available. */}
           {claim && (
-            <div className="mt-3 space-y-3">
+            <div className="space-y-3">
               <div ref={galleryRef} tabIndex={-1} className="rounded-card outline-none focus-visible:ring-2 focus-visible:ring-brand-700">
                 <ClaimEvidenceGallery
                   claimId={claimId}
@@ -352,7 +369,7 @@ export const ClaimTracker = ({ claimId, language, onBack }: ClaimTrackerProps) =
               )}
             </div>
           )}
-        </>
+        </div>
       )}
 
       <ConfirmDialog
@@ -394,7 +411,7 @@ const DecisionCard = ({
   const { t } = useTranslation();
   const titleId = useId();
   return (
-    <section aria-labelledby={titleId} data-testid="decision-card" data-decision={decision} className="mb-3">
+    <section aria-labelledby={titleId} data-testid="decision-card" data-decision={decision}>
       <h3 id={titleId} className="sr-only">
         {t('trackerDecisionTitle')}
       </h3>

@@ -65,17 +65,17 @@ export default function VoiceRecorder({ onResult }: VoiceRecorderProps) {
         type="button"
         aria-label={isRecording ? t('stop') : t('speak')}
         title={isRecording ? t('stop') : t('speak')}
-        className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors ${
+        className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition-colors ${
           isRecording
-            ? 'bg-red-600 text-white'
-            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            ? 'bg-danger-solid text-white'
+            : 'bg-surface-sunken text-ink-muted hover:bg-surface-border'
         }`}
       >
         {isRecording ? (
           <>
             <Square className="h-4 w-4" />
-            <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 animate-ping rounded-full bg-red-500" />
-            <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-red-600" />
+            <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 animate-ping rounded-full bg-danger-solid" />
+            <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-danger-solid" />
           </>
         ) : (
           <Mic className="h-5 w-5" />
@@ -83,8 +83,8 @@ export default function VoiceRecorder({ onResult }: VoiceRecorderProps) {
       </button>
 
       {error && (
-        <p className="ml-2 text-xs text-red-500">
-          {t('micError')}: {error}
+        <p role="alert" className="ml-2 text-xs text-danger-fg">
+          {t('micErrorBody')}
         </p>
       )}
     </div>

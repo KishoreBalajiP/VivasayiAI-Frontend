@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import {
@@ -69,6 +69,21 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
     loadParcels();
   }, [loadParcels]);
 
+  const focusRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!focusRef.current) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (onClose) onClose();
+        e.stopPropagation();
+      }
+    };
+    const node = focusRef.current;
+    node.addEventListener('keydown', handleKeyDown);
+    return () => node.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   const resetForm = () => {
     setName('');
     setCrop('');
@@ -129,7 +144,7 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
 
     // After validation, geometry is guaranteed to be non-null
     const validGeometry = geometry!;
-    
+
     setIsSubmitting(true);
     setSubmitError(null);
 
@@ -198,83 +213,83 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
   const renderParcelCard = (parcel: ParcelRecord) => {
     const usable = hasUsableGeometry(parcel);
     return (
-    <div key={parcel.parcelId} className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h3 className="truncate font-semibold text-gray-900">
-              {parcel.name || t('parcelNameLabel')}
-            </h3>
-            {usable ? (
-              <span className="whitespace-nowrap text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
-                {t('parcelAreaAcresLabel', { acres: parcel.calculatedAreaAcres })}
-              </span>
-            ) : (
-              <span className="whitespace-nowrap text-xs text-amber-800 bg-amber-100 px-2 py-0.5 rounded">
-                {t('parcelBoundaryMissing')}
-              </span>
+      <div key={parcel.parcelId} className="rounded-2xl border border-surface-border bg-white p-4 shadow-sm">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <h3 className="truncate font-semibold text-ink">
+                {parcel.name || t('parcelNameLabel')}
+              </h3>
+              {usable ? (
+                <span className="whitespace-nowrap text-xs text-ink-subtle bg-surface-muted px-2 py-0.5 rounded">
+                  {t('parcelAreaAcresLabel', { acres: parcel.calculatedAreaAcres })}
+                </span>
+              ) : (
+                <span className="whitespace-nowrap text-xs text-warning-fg bg-warning-bg px-2 py-0.5 rounded">
+                  {t('parcelBoundaryMissing')}
+                </span>
+              )}
+            </div>
+            {parcel.crop && (
+              <div className="mt-1 flex items-center gap-1 text-sm text-ink-subtle">
+                <MapPin className="h-3.5 w-3.5" />
+                <span>{t('parcelCropLabel')}: {parcel.crop}</span>
+              </div>
+            )}
+            {!usable && (
+              <p className="mt-2 rounded-lg border border-warning-border bg-warning-bg px-2.5 py-1.5 text-xs text-warning-fg">
+                {t('parcelBoundaryMissingHint')}
+              </p>
             )}
           </div>
-          {parcel.crop && (
-            <div className="mt-1 flex items-center gap-1 text-sm text-gray-500">
-              <MapPin className="h-3.5 w-3.5" />
-              <span>{t('parcelCropLabel')}: {parcel.crop}</span>
-            </div>
-          )}
-          {!usable && (
-            <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800">
-              {t('parcelBoundaryMissingHint')}
-            </p>
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {usable && (
-            <button
-              onClick={() => setViewingParcel(parcel)}
-              className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-emerald-700"
-              aria-label={t('viewMap')}
-            >
-              <MapIcon className="h-4 w-4" />
-            </button>
-          )}
-          <button
-            onClick={() => openEditModal(parcel)}
-            className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-emerald-700"
-            aria-label={t('editParcel')}
-          >
-            <Edit className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setPendingDelete(parcel)}
-            disabled={deletingParcelId === parcel.parcelId}
-            className="rounded-lg p-2 text-gray-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
-            aria-label={t('deleteParcel')}
-          >
-            {deletingParcelId === parcel.parcelId ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Trash2 className="h-4 w-4" />
+          <div className="flex shrink-0 items-center gap-1">
+            {usable && (
+              <button
+                onClick={() => setViewingParcel(parcel)}
+                className="rounded-lg p-2 text-ink-subtle hover:bg-surface-muted hover:text-brand-700"
+                aria-label={t('viewMap')}
+              >
+                <MapIcon className="h-4 w-4" />
+              </button>
             )}
-          </button>
+            <button
+              onClick={() => openEditModal(parcel)}
+              className="rounded-lg p-2 text-ink-subtle hover:bg-surface-muted hover:text-brand-700"
+              aria-label={t('editParcel')}
+            >
+              <Edit className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setPendingDelete(parcel)}
+              disabled={deletingParcelId === parcel.parcelId}
+              className="rounded-lg p-2 text-ink-subtle hover:bg-danger-bg hover:text-danger-fg disabled:opacity-50"
+              aria-label={t('deleteParcel')}
+            >
+              {deletingParcelId === parcel.parcelId ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4" />
+              )}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
   };
 
   if (status === 'loading') {
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="flex h-14 shrink-0 items-center justify-between px-4 border-b border-gray-100">
+        <div className="flex h-14 shrink-0 items-center justify-between px-4 border-b border-surface-border">
           <button
             onClick={onClose}
-            className="rounded-lg p-2 text-gray-500 hover:bg-gray-100"
+            className="rounded-lg p-2 text-ink-subtle hover:bg-surface-muted"
             aria-label={t('backToClaims')}
           >
             <ArrowLeft className="h-5 w-5" />
           </button>
-          <h2 className="text-lg font-bold text-gray-900">{t('manageParcelsTitle')}</h2>
+          <h2 className="text-lg font-bold text-ink">{t('manageParcelsTitle')}</h2>
           <div className="w-10" />
         </div>
         <div className="flex flex-1 items-center justify-center">
@@ -287,20 +302,20 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
   if (status === 'error') {
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="flex h-14 shrink-0 items-center justify-between px-4 border-b border-gray-100">
+        <div className="flex h-14 shrink-0 items-center justify-between px-4 border-b border-surface-border">
           <button
             onClick={onClose}
-            className="rounded-lg p-2 text-gray-500 hover:bg-gray-100"
+            className="rounded-lg p-2 text-ink-subtle hover:bg-surface-muted"
             aria-label={t('backToClaims')}
           >
             <ArrowLeft className="h-5 w-5" />
           </button>
-          <h2 className="text-lg font-bold text-gray-900">{t('manageParcelsTitle')}</h2>
+          <h2 className="text-lg font-bold text-ink">{t('manageParcelsTitle')}</h2>
           <div className="w-10" />
         </div>
         <div className="flex flex-1 items-center justify-center px-4">
           <div className="text-center">
-            <p className="text-sm text-red-700">{t('claimsLoadFailed')}</p>
+            <p className="text-sm text-danger-fg">{t('claimsLoadFailed')}</p>
             <Button variant="secondary" size="sm" onClick={loadParcels} className="mt-3">
               {t('retry')}
             </Button>
@@ -313,30 +328,30 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       {/* Header */}
-      <header className="flex h-14 shrink-0 items-center justify-between px-4 border-b border-gray-100 bg-white">
+      <header className="flex h-14 shrink-0 items-center justify-between px-4 border-b border-surface-border bg-white">
         <button
           onClick={onClose}
-          className="rounded-lg p-2 text-gray-500 hover:bg-gray-100"
+          className="rounded-lg p-2 text-ink-subtle hover:bg-surface-muted"
           aria-label={t('backToClaims')}
         >
           <ArrowLeft className="h-5 w-5" />
         </button>
-        <h2 className="text-lg font-bold text-gray-900">{t('manageParcelsTitle')}</h2>
+        <h2 className="text-lg font-bold text-ink">{t('manageParcelsTitle')}</h2>
         <Button onClick={openAddModal} className="shrink-0" leadingIcon={<Plus className="h-4 w-4" />}>
           <span className="sr-only sm:not-sr-only">{t('addParcel')}</span>
         </Button>
       </header>
 
       {/* Content */}
-      <main className="flex min-h-0 min-w-0 flex-1 overflow-y-auto p-4 bg-gray-50">
+      <main className="flex min-h-0 min-w-0 flex-1 overflow-y-auto p-4 bg-surface-muted">
         <div className="mx-auto max-w-2xl space-y-4">
           {parcels.length === 0 ? (
             <div className="flex flex-col items-center gap-3 py-12 text-center">
-              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500 to-green-700">
+              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700">
                 <MapPin className="h-8 w-8 text-white" />
               </div>
-              <h3 className="text-base font-bold text-gray-900">{t('noParcelsTitle')}</h3>
-              <p className="max-w-md text-sm text-gray-600">{t('noParcelsBody')}</p>
+              <h3 className="text-base font-bold text-ink">{t('noParcelsTitle')}</h3>
+              <p className="max-w-md text-sm text-ink-subtle">{t('noParcelsBody')}</p>
               <Button onClick={openAddModal} className="mt-1">
                 {t('addFirstParcel')}
               </Button>
@@ -357,29 +372,32 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
           role="dialog"
           aria-modal="true"
           aria-label={editingParcel ? t('editParcel') : t('addParcel')}
-          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-emerald-950/50 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-brand-950/50 p-4 backdrop-blur-sm"
+          onKeyDown={(e) => e.key !== 'Escape' || onClose && onClose()}
+          autoFocus
+          ref={focusRef}
         >
           <div className="bg-white rounded-3xl shadow-2xl p-5 sm:p-8 md:p-10 max-w-lg w-full mx-2 my-6">
             <div className="mb-4 flex justify-between items-center">
-              <h3 className="text-xl font-bold text-gray-800">
+              <h3 className="text-xl font-bold text-ink">
                 {editingParcel ? t('editParcel') : t('addParcel')}
               </h3>
               <button
                 onClick={closeModal}
                 aria-label={t('cancel')}
-                className="rounded-full p-1.5 text-gray-500 hover:bg-gray-100"
+                className="rounded-full p-1.5 text-ink-subtle hover:bg-surface-muted"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <p className="mb-6 text-sm text-gray-600">
-              {editingParcel ? t('manageParcelsDescription') : t('manageParcelsDescription')}
+            <p className="mb-6 text-sm text-ink-subtle">
+              {t('manageParcelsDescription')}
             </p>
 
             {/* NAME */}
             <div className="mb-4">
-              <label htmlFor="parcel-name" className="block text-sm font-semibold text-gray-700 mb-1">
+              <label htmlFor="parcel-name" className="block text-sm font-semibold text-ink mb-1">
                 {t('parcelName')}
               </label>
               <input
@@ -391,13 +409,13 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
                   setSubmitError(null);
                 }}
                 placeholder={t('parcelNamePlaceholder')}
-                className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                className="w-full p-3 border border-surface-border rounded-xl outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
               />
             </div>
 
             {/* CROP */}
             <div className="mb-4">
-              <label htmlFor="parcel-crop" className="block text-sm font-semibold text-gray-700 mb-1">
+              <label htmlFor="parcel-crop" className="block text-sm font-semibold text-ink mb-1">
                 {t('parcelCrop')}
               </label>
               <input
@@ -409,7 +427,7 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
                   setSubmitError(null);
                 }}
                 placeholder={t('parcelCropPlaceholder')}
-                className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                className="w-full p-3 border border-surface-border rounded-xl outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
               />
             </div>
 
@@ -417,7 +435,7 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
                 and recomputes the authoritative acreage on save; the map's own number is a
                 preview only. */}
             <div className="mb-6">
-              <label className="block text-sm font-semibold text-gray-700 mb-1">
+              <label className="block text-sm font-semibold text-ink mb-1">
                 {t('drawingBoundary')}
               </label>
               <LazyParcelDrawMap
@@ -432,18 +450,18 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
               {/* While editing, show the area the BACKEND currently stores for this parcel (authoritative),
                 so the farmer can compare it against the live preview from the map. */}
               {editingParcel && (
-                <p className="mt-2 flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                <p className="mt-2 flex items-center gap-1.5 rounded-lg border border-success-border bg-success-bg px-3 py-2 text-sm text-success-fg">
                   <Check className="h-4 w-4" />
                   {t('parcelAreaAcresLabel', { acres: editingParcel.calculatedAreaAcres })}
                 </p>
               )}
               {submitError === 'boundaryRequired' && (
-                <p role="alert" className="mt-2 text-sm text-red-600">{t('boundaryRequired')}</p>
+                <p role="alert" className="mt-2 text-sm text-danger-fg">{t('boundaryRequired')}</p>
               )}
             </div>
 
             {submitError && submitError !== 'boundaryRequired' && (
-              <p role="alert" className="mb-4 text-center text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+              <p role="alert" className="mb-4 text-center text-sm text-danger-fg bg-danger-bg border border-danger-border rounded-lg px-3 py-2">
                 {t(submitError)}
               </p>
             )}
@@ -471,17 +489,17 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
           role="dialog"
           aria-modal="true"
           aria-label={t('viewMap')}
-          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-emerald-950/50 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-brand-950/50 p-4 backdrop-blur-sm"
         >
           <div className="my-6 w-full max-w-lg rounded-3xl bg-white p-5 shadow-2xl sm:p-6">
             <div className="mb-3 flex items-center justify-between gap-2">
-              <h3 className="truncate text-lg font-bold text-gray-800">
+              <h3 className="truncate text-lg font-bold text-ink">
                 {viewingParcel.name || t('parcelNameLabel')}
               </h3>
               <button
                 onClick={() => setViewingParcel(null)}
                 aria-label={t('cancel')}
-                className="rounded-full p-1.5 text-gray-500 hover:bg-gray-100"
+                className="rounded-full p-1.5 text-ink-subtle hover:bg-surface-muted"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -492,7 +510,7 @@ export const ManageParcels = ({ onClose, onParcelsChange, autoOpenAdd, onParcelC
               label={viewingParcel.name || t('viewMap')}
               readOnly
             />
-            <p className="mt-3 flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+            <p className="mt-3 flex items-center gap-1.5 rounded-lg border border-success-border bg-success-bg px-3 py-2 text-sm text-success-fg">
               <Check className="h-4 w-4" />
               {t('parcelAreaAcresLabel', { acres: viewingParcel.calculatedAreaAcres })}
             </p>

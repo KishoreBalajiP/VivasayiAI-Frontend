@@ -1,11 +1,10 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
-import { useLocation } from '../context/LocationContext';
 import { createProfile } from '../api';
 import { ApiClientError } from '../api/client';
 import { tamilNaduDistricts } from '../config/tamilnaduDistricts';
-import { X } from 'lucide-react';
+import { Sprout, X } from 'lucide-react';
 import { Button } from './ui';
 import type { FarmProfile, Language } from '../types';
 
@@ -20,13 +19,23 @@ const MAX_CROP_LENGTH = 100;
 export const ProfileOnboarding = ({ onComplete, onSkip }: Props) => {
   const { t, i18n } = useTranslation();
   const { language, setLanguage } = useAuth();
-  // Device location is a convenience pre-fill only — the farmer still chooses and owns the
-  // district saved to the profile. Location is never equated with the farm district.
-  const { district: detectedDistrict, status: locStatus } = useLocation();
 
-  const [district, setDistrict] = useState(
-    locStatus === 'granted' && detectedDistrict ? detectedDistrict : ''
-  );
+  const focusRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!focusRef.current) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (onSkip) onSkip();
+        e.stopPropagation();
+      }
+    };
+    const node = focusRef.current;
+    node.addEventListener('keydown', handleKeyDown);
+    return () => node.removeEventListener('keydown', handleKeyDown);
+  }, [onSkip]);
+
+  const [district, setDistrict] = useState('');
   const [crops, setCrops] = useState<string[]>([]);
   const [cropInput, setCropInput] = useState('');
   const [acresInput, setAcresInput] = useState('');
@@ -34,6 +43,10 @@ export const ProfileOnboarding = ({ onComplete, onSkip }: Props) => {
   const [errors, setErrors] = useState<{ district?: string; crops?: string; acres?: string }>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const setErrorFromKey = (field: 'district' | 'crops' | 'acres', key: string) => {
+    setErrors(prev => ({ ...prev, [field]: key }));
+  };
 
   const addCrop = () => {
     const crop = cropInput.trim();
@@ -57,11 +70,6 @@ export const ProfileOnboarding = ({ onComplete, onSkip }: Props) => {
     }
     setCrops(prev => [...prev, crop]);
     setCropInput('');
-  };
-
-  // Full-width error shown under the field the user is correcting.
-  const setErrorFromKey = (field: 'district' | 'crops' | 'acres', key: string) => {
-    setErrors(prev => ({ ...prev, [field]: key }));
   };
 
   const selectLanguage = (lang: Language) => {
@@ -124,25 +132,28 @@ export const ProfileOnboarding = ({ onComplete, onSkip }: Props) => {
       role="dialog"
       aria-modal="true"
       aria-label={t('profileHeading')}
-      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-emerald-950/50 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-brand-950/50 p-4 backdrop-blur-sm"
+      onKeyDown={(e) => e.key !== 'Escape' || onSkip && onSkip()}
+      autoFocus
+      ref={focusRef}
     >
       <div className="bg-white rounded-3xl shadow-2xl p-5 sm:p-8 md:p-10 max-w-lg w-full mx-2 my-6">
         <div className="flex justify-center mb-4">
-          <div className="bg-gradient-to-br from-emerald-500 to-green-700 p-4 sm:p-5 rounded-full shadow-lg">
-            <span className="text-3xl sm:text-4xl">🌾</span>
+          <div className="bg-gradient-to-br from-brand-500 to-brand-700 p-4 sm:p-5 rounded-full shadow-lg">
+            <Sprout aria-hidden="true" className="h-8 w-8 text-white sm:h-9 sm:w-9" />
           </div>
         </div>
 
-        <h1 className="text-xl sm:text-2xl font-bold text-center text-gray-800 mb-2">
+        <h1 className="text-xl sm:text-2xl font-bold text-center text-ink mb-2">
           {t('profileHeading')}
         </h1>
-        <p className="text-center text-gray-600 text-sm sm:text-base mb-6">
+        <p className="text-center text-ink-muted text-sm sm:text-base mb-6">
           {t('profileDescription')}
         </p>
 
         {/* DISTRICT */}
         <div className="mb-4">
-          <label htmlFor="profile-district" className="block text-sm font-semibold text-gray-700 mb-1">
+          <label htmlFor="profile-district" className="block text-sm font-semibold text-ink mb-1">
             {t('district')}
           </label>
           <select
@@ -152,7 +163,7 @@ export const ProfileOnboarding = ({ onComplete, onSkip }: Props) => {
               setDistrict(e.target.value);
               setErrors(prev => ({ ...prev, district: undefined }));
             }}
-            className="w-full p-3 border border-gray-200 rounded-xl bg-white outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+            className="w-full p-3 border border-surface-border rounded-xl bg-white outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
           >
             <option value="">{t('district')}…</option>
             {tamilNaduDistricts.map(d => (
@@ -162,13 +173,13 @@ export const ProfileOnboarding = ({ onComplete, onSkip }: Props) => {
             ))}
           </select>
           {errors.district && (
-            <p role="alert" className="text-sm text-red-600 mt-1">{t(errors.district)}</p>
+            <p role="alert" className="text-sm text-danger-fg mt-1">{t(errors.district)}</p>
           )}
         </div>
 
         {/* CROPS */}
         <div className="mb-4">
-          <label htmlFor="profile-crop-input" className="block text-sm font-semibold text-gray-700 mb-1">
+          <label htmlFor="profile-crop-input" className="block text-sm font-semibold text-ink mb-1">
             {t('addCrops')}
           </label>
           <div className="flex gap-2">
@@ -184,14 +195,13 @@ export const ProfileOnboarding = ({ onComplete, onSkip }: Props) => {
                 }
               }}
               placeholder={t('cropPlaceholder')}
-              className="flex-1 p-3 border border-gray-200 rounded-xl outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+              className="flex-1 p-3 border border-surface-border rounded-xl outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
             />
             <button
               type="button"
               onClick={addCrop}
               disabled={!cropInput.trim() || crops.length >= MAX_CROPS}
-              className="px-4 py-3 bg-green-600 text-white rounded-xl font-semibold
-                hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+              className="px-4 py-3 bg-success-solid text-white rounded-xl font-semibold hover:bg-success-fg disabled:bg-surface-border disabled:cursor-not-allowed"
             >
               {t('add')}
             </button>
@@ -202,14 +212,14 @@ export const ProfileOnboarding = ({ onComplete, onSkip }: Props) => {
               {crops.map(crop => (
                 <span
                   key={crop}
-                  className="inline-flex items-center gap-1 bg-green-100 text-green-900 px-3 py-1 rounded-full text-sm"
+                  className="inline-flex items-center gap-1 bg-success-bg text-success-fg px-3 py-1 rounded-full text-sm"
                 >
                   {crop}
                   <button
                     type="button"
                     onClick={() => setCrops(prev => prev.filter(c => c !== crop))}
                     aria-label={t('removeCrop', { crop })}
-                    className="text-green-700 hover:text-red-600"
+                    className="text-success-fg hover:text-danger-fg"
                   >
                     <X className="w-3 h-3" />
                   </button>
@@ -219,13 +229,13 @@ export const ProfileOnboarding = ({ onComplete, onSkip }: Props) => {
           )}
 
           {errors.crops && (
-            <p role="alert" className="text-sm text-red-600 mt-1">{t(errors.crops)}</p>
+            <p role="alert" className="text-sm text-danger-fg mt-1">{t(errors.crops)}</p>
           )}
         </div>
 
         {/* ACRES */}
         <div className="mb-4">
-          <label htmlFor="profile-acres" className="block text-sm font-semibold text-gray-700 mb-1">
+          <label htmlFor="profile-acres" className="block text-sm font-semibold text-ink mb-1">
             {t('acres')}
           </label>
           <input
@@ -240,16 +250,16 @@ export const ProfileOnboarding = ({ onComplete, onSkip }: Props) => {
               setErrors(prev => ({ ...prev, acres: undefined }));
             }}
             placeholder={t('acresPlaceholder')}
-            className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+            className="w-full p-3 border border-surface-border rounded-xl outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
           />
           {errors.acres && (
-            <p role="alert" className="text-sm text-red-600 mt-1">{t(errors.acres)}</p>
+            <p role="alert" className="text-sm text-danger-fg mt-1">{t(errors.acres)}</p>
           )}
         </div>
 
         {/* LANGUAGE */}
         <div className="mb-6">
-          <span className="block text-sm font-semibold text-gray-700 mb-1">
+          <span className="block text-sm font-semibold text-ink mb-1">
             {t('preferredLanguage')}
           </span>
           <div className="grid grid-cols-2 gap-2">
@@ -258,8 +268,8 @@ export const ProfileOnboarding = ({ onComplete, onSkip }: Props) => {
               onClick={() => selectLanguage('ta')}
               className={`p-3 rounded-xl border-2 font-semibold transition-colors
                 ${selectedLanguage === 'ta'
-                  ? 'border-orange-500 bg-orange-50 text-orange-800'
-                  : 'border-gray-300 text-gray-700'}`}
+                  ? 'border-brand-500 bg-brand-50 text-brand-800'
+                  : 'border-surface-border text-ink'}`}
             >
               தமிழ்
             </button>
@@ -268,8 +278,8 @@ export const ProfileOnboarding = ({ onComplete, onSkip }: Props) => {
               onClick={() => selectLanguage('en')}
               className={`p-3 rounded-xl border-2 font-semibold transition-colors
                 ${selectedLanguage === 'en'
-                  ? 'border-green-600 bg-green-50 text-green-800'
-                  : 'border-gray-300 text-gray-700'}`}
+                  ? 'border-brand-500 bg-brand-50 text-brand-800'
+                  : 'border-surface-border text-ink'}`}
             >
               English
             </button>
@@ -277,7 +287,7 @@ export const ProfileOnboarding = ({ onComplete, onSkip }: Props) => {
         </div>
 
         {submitError && (
-          <p role="alert" className="mb-4 text-center text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          <p role="alert" className="mb-4 text-center text-sm text-danger-fg bg-danger-bg border border-danger-border rounded-lg px-3 py-2">
             {t(submitError)}
           </p>
         )}
@@ -291,7 +301,7 @@ export const ProfileOnboarding = ({ onComplete, onSkip }: Props) => {
         {onSkip && (
           <button
             onClick={onSkip}
-            className="mt-3 w-full text-center text-sm font-medium text-gray-500 hover:text-gray-700"
+            className="mt-3 w-full text-center text-sm font-medium text-ink-subtle hover:text-ink"
           >
             {t('continueWithoutProfile')}
           </button>

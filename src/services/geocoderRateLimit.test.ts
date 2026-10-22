@@ -140,7 +140,9 @@ describe('claimGeocoderSlot', () => {
     resetGeocoderPacing();
     const start = Date.now();
     await claimGeocoderSlot(PUBLIC, new AbortController().signal);
-    expect(Date.now() - start).toBe(0);
+    // Same jitter-tolerant bound as the first-request test: must be far below the
+    // spacing interval, but not an exact 0 ms check that flakes under load.
+    expect(Date.now() - start).toBeLessThan(GEOCODER_MIN_INTERVAL_MS / 4);
   });
 });
 

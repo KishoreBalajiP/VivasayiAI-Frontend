@@ -57,15 +57,15 @@ export const Navbar = ({
     // added here later gets the right ring without remembering a class. The white user menu below
     // is marked data-surface="light" and keeps the brand-700 ring.
     <header data-surface="dark" className="relative z-30 shrink-0 bg-brand-900 text-white shadow-md">
-      <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-3 sm:gap-3 sm:px-4">
+      <div className="flex h-14 items-center gap-2 px-3 sm:gap-3 sm:px-4">
         {/* BRAND */}
         <div className="flex min-w-0 items-center gap-2">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-green-700 shadow-inner">
             <Sprout aria-hidden="true" className="h-5 w-5 text-white" />
           </div>
           <div className="min-w-0 leading-tight">
-            <div className="truncate text-sm font-bold sm:text-base">Vivasayi AI</div>
-            <div className="hidden truncate text-2xs text-brand-200 md:block">
+            <div className="sr-only font-bold sm:not-sr-only sm:truncate sm:text-base">Vivasayi AI</div>
+            <div className="hidden truncate text-2xs text-brand-200 lg:block">
               {t('appTitle')}
             </div>
           </div>
@@ -88,7 +88,7 @@ export const Navbar = ({
             )}
           >
             <MapPin aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">
+            <span className="sr-only sm:not-sr-only sm:truncate">
               {farmDistrict ? t('headerFarmDistrict', { district: farmDistrict }) : t('headerSetFarmDistrict')}
             </span>
           </button>

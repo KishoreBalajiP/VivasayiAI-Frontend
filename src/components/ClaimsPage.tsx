@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { FileText, Loader2, Plus, RefreshCw } from 'lucide-react';
+import { ArrowRight, FileText, Loader2, Plus, RefreshCw } from 'lucide-react';
 import { ApiClientError } from '../api/client';
 import { uploadImage } from '../api';
 import {
@@ -14,7 +14,7 @@ import {
 } from '../api/claims';
 import { formatRoute } from '../routing/hashRoute';
 import { useHashRoute } from '../routing/useHashRoute';
-import { formatClaimDate, resolveClaimsListState } from '../utils/claimFlow';
+import { claimNextStepKey, formatClaimDate, resolveClaimsListState } from '../utils/claimFlow';
 import { useClaimsViewport } from '../utils/claimResponsive';
 import { ClaimWizard } from './ClaimWizard';
 import { ClaimStateBadge } from './ClaimStatusCard';
@@ -208,9 +208,12 @@ const ClaimsList = ({ language, onOpenNew, onOpenClaim }: ClaimsListProps) => {
   }
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-3 pb-8 pt-1 sm:px-4">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <h2 className="text-lg font-bold text-ink sm:text-xl">{t('myClaims')}</h2>
+    <div className="mx-auto w-full max-w-5xl px-3 pb-8 pt-1 sm:px-4">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+        <div className="min-w-0">
+          <h2 className="text-lg font-bold text-ink sm:text-xl">{t('myClaims')}</h2>
+          <p className="mt-0.5 text-sm text-ink-muted">{t('claimsPageSubtitle')}</p>
+        </div>
         <Button onClick={onOpenNew} className="shrink-0" leadingIcon={<Plus className="h-4 w-4" />}>
           <span className="hidden sm:inline">{t('newClaimButton')}</span>
           <span className="sm:hidden">{t('newClaim')}</span>
@@ -240,37 +243,57 @@ const ClaimsList = ({ language, onOpenNew, onOpenClaim }: ClaimsListProps) => {
 
       {listState.kind === 'ready' && (
         <ul
-          className={`grid gap-3 ${viewport.columns === 1 ? 'sm:grid-cols-2' : viewport.columns === 2 ? 'sm:grid-cols-2 lg:grid-cols-3' : 'grid-cols-3'}`}
+          className={`grid gap-4 ${viewport.columns === 1 ? 'sm:grid-cols-2' : viewport.columns === 2 ? 'sm:grid-cols-2 lg:grid-cols-3' : 'grid-cols-3'}`}
         >
-          {listState.models.map((model) => (
-            <li key={model.id}>
-              <button
-                onClick={() => onOpenClaim(model.id)}
-                className="w-full rounded-card border border-surface-border bg-white p-4 text-left shadow-card transition hover:border-brand-300 hover:shadow"
-              >
-                <div className="mb-2 flex items-start justify-between gap-2">
-                  <span className="truncate font-semibold text-ink">
-                    {t(model.eventTypeLabelKey)}
-                  </span>
-                  <ClaimStateBadge state={model.state} />
-                </div>
-                <div className="mb-1 text-sm text-ink-muted">{t('claimDatesOn', { date: formatClaimDate(model.eventDate, language) })}</div>
-                <div className="mb-1 text-sm text-ink-muted">
-                  {t('claimedAreaLabel')}: {model.claimedAreaAcres} {t('acre')}
-                </div>
-                {!viewport.compact && (
-                  <div className="mb-1 truncate text-xs text-ink-subtle">
-                    {model.parcelName ?? t('parcelNameLabel')}
-                    {model.crop ? ` · ${model.crop}` : ''}
+          {listState.models.map((model) => {
+            const nextStepKey = claimNextStepKey(model.state);
+            return (
+              <li key={model.id}>
+                <button
+                  onClick={() => onOpenClaim(model.id)}
+                  className="flex h-full w-full flex-col rounded-card border border-surface-border bg-white p-4 text-left shadow-card transition hover:border-brand-300 hover:shadow"
+                >
+                  <div className="mb-2 flex items-start justify-between gap-2">
+                    <span className="min-w-0 truncate font-semibold text-ink">
+                      {t(model.eventTypeLabelKey)}
+                    </span>
+                    <ClaimStateBadge state={model.state} className="shrink-0" />
                   </div>
-                )}
-                <div className="flex items-center justify-between text-xs text-ink-subtle">
-                  <span>{t('claimFiledOn', { date: formatClaimDate(model.createdAt, language) })}</span>
-                  <span>{t('evidenceCountLabel', { count: model.evidenceCount })}</span>
-                </div>
-              </button>
-            </li>
-          ))}
+
+                  <div className="space-y-0.5 text-sm text-ink-muted">
+                    <div className="truncate">{t('claimDatesOn', { date: formatClaimDate(model.eventDate, language) })}</div>
+                    <div className="truncate">
+                      {t('claimedAreaLabel')}: {model.claimedAreaAcres} {t('acre')}
+                    </div>
+                    {!viewport.compact && (
+                      <div className="truncate text-xs text-ink-subtle">
+                        {model.parcelName ?? t('parcelNameLabel')}
+                        {model.crop ? ` · ${model.crop}` : ''}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between gap-2 border-t border-surface-border pt-2 text-xs text-ink-subtle">
+                    <span className="truncate">{t('claimFiledOn', { date: formatClaimDate(model.createdAt, language) })}</span>
+                    <span className="shrink-0">{t('evidenceCountLabel', { count: model.evidenceCount })}</span>
+                  </div>
+
+                  {nextStepKey && (
+                    <div
+                      data-testid="claim-next-step"
+                      className="mt-3 flex items-start gap-1.5 rounded-control bg-surface-muted px-2.5 py-1.5 text-xs text-ink-muted"
+                    >
+                      <ArrowRight aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-brand-700" />
+                      <span className="min-w-0">
+                        <span className="font-semibold text-ink-subtle">{t('nextStepLabel')}</span>{' '}
+                        {t(nextStepKey)}
+                      </span>
+                    </div>
+                  )}
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
@@ -278,3 +301,4 @@ const ClaimsList = ({ language, onOpenNew, onOpenClaim }: ClaimsListProps) => {
 };
 
 export default ClaimsPage;
+

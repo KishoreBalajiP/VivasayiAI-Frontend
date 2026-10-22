@@ -32,17 +32,20 @@ export const enV2 = {
   weatherNearYou: 'Weather near you: {{district}}',
   weatherApproximate: '(approximate)',
   weatherUseDevice: 'Use my current location',
-  weatherUseFarm: 'Use farm district ({{district}})',
+  weatherShowDetails: 'Show weather details',
+  weatherHideDetails: 'Hide weather details',
+  weatherUseFarm: 'Use farm location ({{district}})',
   weatherDeviceOutsideTn:
-    'Your device appears to be in {{state}}, outside Tamil Nadu. Live weather is available for Tamil Nadu districts, so we are showing your farm district instead.',
+    'Your device appears to be in {{state}}, outside Tamil Nadu. Weather is currently shown for your farm district, {{district}}.',
   weatherDeviceOutsideTnNoState:
-    'Your device appears to be outside Tamil Nadu. Live weather is available for Tamil Nadu districts, so we are showing your farm district instead.',
+    'Your device is outside Tamil Nadu. Weather is currently shown for your farm district, {{district}}.',
   weatherDeviceOutsideTnNoFarm:
-    'Your device appears to be outside Tamil Nadu. Live weather is available for Tamil Nadu districts. Set your farm district to see its weather.',
-  weatherDeviceDeniedFarm: 'Location permission was not given, so we are showing weather for your farm district.',
+    'Your device is outside Tamil Nadu. Live weather is available for Tamil Nadu districts, so set your farm district to see its weather.',
+  weatherDeviceDeniedFarm:
+    'Location permission was not given. Weather is currently shown for your farm district, {{district}}.',
   weatherDeviceDeniedNoFarm: 'Location permission was not given. Set your farm district to see local weather.',
   weatherDeviceUnavailableFarm:
-    'Your device location is not available right now, so we are showing weather for your farm district.',
+    'Your device location is not available right now. Weather is currently shown for your farm district, {{district}}.',
   weatherDeviceUnavailableNoFarm:
     'Your device location is not available right now. Set your farm district to see local weather.',
   weatherSetFarmPrompt: 'Set your farm district to see local weather.',
@@ -313,6 +316,15 @@ export const enV2 = {
   actionDocumentGroup: 'Any one of: {{docs}}',
   actionAnyLandDocument: 'Any land document',
   actionSubmitFailedTitle: 'Your claim is not submitted yet',
+
+  // ── Claims list (my claims) ─────────────────────────────────────────────────────────────
+  // The subtitle is supporting copy under the "My Claims" heading; the nextStep_* hints are shown
+  // on a card ONLY for a state whose action the existing workflow already supports (see D4).
+  claimsPageSubtitle: 'Every claim you have filed, with its current status.',
+  nextStep_submit: 'Submit this claim to start the checks',
+  nextStep_resubmit: 'Add the requested evidence and resubmit',
+  nextStep_appeal: 'You can appeal this decision',
+  nextStepLabel: 'Next step:',
 
   satelliteTitle: 'Satellite check',
   satelliteSupportingBadge: 'Supporting only',

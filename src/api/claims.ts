@@ -118,6 +118,33 @@ export const verifyClaimRequest = async (claimId: string): Promise<VerificationD
   return envelope.data.verification;
 };
 
+// GET /claims/:claimId/verification — persisted verification evidence summary (Phase 15).
+// Same endpoint as getClaimVerification below; this projection returns only the
+// `verification` view for the farmer-facing checks panel.
+export const getClaimVerificationSummary = async (claimId: string): Promise<{
+  claimId: string;
+  foundationVersion: string;
+  persisted: Array<Record<string, unknown>>;
+  existing: Array<Record<string, unknown>>;
+  operativeSources: string[];
+  futureSources: string[];
+  statusVocabulary: string[];
+}> => {
+  const envelope = await request<{
+    verification: {
+      claimId: string;
+      foundationVersion: string;
+      persisted: Array<Record<string, unknown>>;
+      existing: Array<Record<string, unknown>>;
+      operativeSources: string[];
+      futureSources: string[];
+      statusVocabulary: string[];
+    };
+    claim?: unknown;
+  }>(`/claims/${claimId}/verification`);
+  return envelope.data.verification;
+};
+
 // GET /claims/:claimId/verification — the farmer-facing status read used for polling. Uses the
 // larger read rate limit (contract §2) and may advance ONE queued verification step on the
 // server, so polling makes progress; poll every 10 s or slower while the claim is `submitted`.

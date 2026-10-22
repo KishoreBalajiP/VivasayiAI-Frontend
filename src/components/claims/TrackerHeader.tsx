@@ -10,7 +10,7 @@ import {
   overallLabelKey,
   overallTone,
 } from '../../utils/claimProgress';
-import { claimEventLabelKey, formatClaimDate } from '../../utils/claimFlow';
+import { formatClaimDate } from '../../utils/claimFlow';
 import type { ProgressReadError } from '../../hooks/useClaimProgress';
 import type { ClaimProgress, LossClaim } from '../../types';
 
@@ -76,7 +76,7 @@ export const TrackerHeader = ({
   };
 
   return (
-    <Card className="mb-3">
+    <Card>
       <CardBody className="space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0 space-y-1">
@@ -115,14 +115,6 @@ export const TrackerHeader = ({
               </button>
             </dd>
           </div>
-          {claim && (
-            <div className="flex min-w-0 items-center gap-2">
-              <dt className="text-ink-muted">{t('reviewEvent')}</dt>
-              <dd className="min-w-0 truncate font-semibold text-ink">
-                {t(claimEventLabelKey(claim.eventType))} · {formatClaimDate(claim.eventDate, language)}
-              </dd>
-            </div>
-          )}
         </dl>
 
         <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm text-ink-muted">

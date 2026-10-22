@@ -41,55 +41,58 @@ export const LoginScreen = () => {
   );
 
   return (
-    <div className="min-h-dvh bg-emerald-50/60">
+    <div className="min-h-dvh bg-brand-50/60">
       <div className="mx-auto flex max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:min-h-dvh lg:grid lg:grid-cols-[minmax(0,1fr),22rem] lg:items-center lg:gap-14 lg:py-10">
         {/* ── LEFT: BRAND + HEADLINE + CONTEXT + TIPS + FEATURES ─────────────────────── */}
         <section className="order-2 min-w-0 lg:order-none">
           <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500 to-green-700 shadow-md">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-50 shadow-md">
               <Sprout aria-hidden="true" className="h-7 w-7 text-white" />
             </div>
             <div>
-              <div className="text-lg font-bold text-emerald-950 sm:text-xl">Vivasayi AI</div>
-              <div className="text-xs font-medium tracking-wide text-emerald-700 uppercase">
+              <div className="text-lg font-bold text-brand-950 sm:text-xl">Vivasayi AI</div>
+              <div className="text-xs font-medium tracking-wide text-brand-700 uppercase">
                 {t('landingKicker')}
               </div>
             </div>
           </div>
 
-          <h1 className="mt-6 max-w-xl text-3xl leading-tight font-bold text-emerald-950 sm:text-4xl lg:text-5xl">
+          <h1 className="mt-6 max-w-xl text-3xl leading-tight font-bold text-brand-950 sm:text-4xl lg:text-5xl">
             {t('heroHeadline')}
           </h1>
-          <p className="mt-3 max-w-xl text-base text-gray-600 sm:text-lg">
+          <p className="mt-3 max-w-xl text-base text-brand-600 sm:text-lg">
             {t('heroSubline')}
           </p>
 
           {/* FARM-FIRST CONTEXT — weather and advice follow the farm district after sign-in */}
-          <div className="mt-7 max-w-xl rounded-2xl border border-emerald-100 bg-white p-4 text-left shadow-sm sm:p-5">
-            <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-emerald-900">
+          <div className="mt-7 max-w-xl rounded-2xl border border-brand-100 bg-white p-4 text-left shadow-sm sm:p-5">
+            <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-brand-700">
               <MapPin aria-hidden="true" className="h-4 w-4 text-brand-700" />
-              {t('landingContextTitle')}
+              <span>{t('landingContextTitle')}</span>
             </div>
+            <p className="mt-1 text-xs text-brand-600">
+              {t('landingContextSubtitle')}
+            </p>
             {renderFarmFirstBlock()}
 
             <div className="my-3 border-t border-dashed border-gray-200" />
 
-            <div className="flex items-center gap-2 text-sm text-gray-600">
-              <CloudSun className="h-4 w-4 shrink-0 text-emerald-600" />
+            <div className="flex items-center gap-2 text-sm text-brand-600">
+              <CloudSun aria-hidden="true" className="h-4 w-4 shrink-0 text-brand-600" />
               <span>{t('signInForWeather')}</span>
             </div>
           </div>
 
           {/* TIPS — existing approved static suggestions */}
           <div className="mt-6 max-w-xl">
-            <p className="text-xs font-semibold tracking-wide text-emerald-800 uppercase">
+            <p className="text-xs font-semibold tracking-wide text-brand-800 uppercase">
               {t('tipHeading')}
             </p>
             <div className="mt-2 flex flex-wrap gap-2">
               {TIPS.map((key) => (
                 <span
                   key={key}
-                  className="rounded-full border border-emerald-100 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm"
+                  className="rounded-full border-brand-100 bg-white px-3 py-1.5 text-xs font-medium text-brand-600 shadow-sm"
                 >
                   {t(key)}
                 </span>
@@ -102,12 +105,12 @@ export const LoginScreen = () => {
             {FEATURES.map(({ key, icon: Icon }) => (
               <div
                 key={key}
-                className="flex items-center gap-3 rounded-xl border border-emerald-100 bg-white px-3.5 py-3 shadow-sm"
+                className="flex items-center gap-3 rounded-xl border border-brand-100 bg-white px-3.5 py-3 shadow-sm"
               >
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700">
                   <Icon className="h-5 w-5" />
                 </span>
-                <span className="text-sm font-medium text-gray-800">{t(key)}</span>
+                <span className="text-sm font-medium text-brand-800">{t(key)}</span>
               </div>
             ))}
           </div>
@@ -149,7 +152,9 @@ export const LoginScreen = () => {
             </div>
           </div>
 
-          <p className="mt-4 text-center text-xs text-gray-500">{t('landingFooterNote')}</p>
+          <footer className="mt-4 text-center text-xs text-gray-500">
+              {t('landingFooterNote')}
+            </footer>
         </aside>
       </div>
     </div>
